@@ -55,7 +55,7 @@ private:
   std::string Name;
   std::string const Key;
   ParamType Type;
-  static int count;
+  inline static int count = 0;
   DataType DType;
 
 public:
@@ -64,7 +64,7 @@ public:
       : Name(_Name), Key("x" + std::to_string(count++)), Type(_Type),
         DType(_DType) {}
 
-  // virtual ~HMInputParamBase(){}
+  virtual ~HMInputParamBase(){}
 
   std::string getName() const { return Name; }
   void setName(std::string _Name) { Name = _Name; }

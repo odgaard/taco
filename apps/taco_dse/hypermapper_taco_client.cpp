@@ -174,7 +174,7 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   numParams++;
 
   HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Integer);
-  chunkSizeParam->setRange(chunkSizeRange);
+  unrollFactorParam->setRange(unrollFactorRange);
   InParams.push_back(unrollFactorParam);
   numParams++;
   return numParams;
@@ -185,10 +185,16 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
   std::vector<int> chunkSizeRange{2, 32};
+  std::vector<int> unrollFactorRange{2, 32};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
   InParams.push_back(chunkSizeParam);
+  numParams++;
+
+  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Integer);
+  unrollFactorParam->setRange(unrollFactorRange);
+  InParams.push_back(unrollFactorParam);
   numParams++;
   return numParams;
 }
@@ -301,6 +307,7 @@ taco::IndexStmt scheduleSDDMMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, i
   IndexVar i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1");
   return stmt.split(i, i0, i1, CHUNK_SIZE)
           .pos(k, kpos, B(i,k))
+          .pos(j, kpos, B(i,j))
           .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
           .reorder({i0, i1, kpos0, j, kpos1})
           .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
@@ -443,23 +450,35 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
+  int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
 
   //Initialize tensors
-  int NUM_I = 10000;
-  int NUM_J = 10000;
-  int NUM_K = 128;
+  // int NUM_I = 1000;
+  // int NUM_J = 1000;
+  // int NUM_K = 1000;
+  int NUM_I = 1021/10;
+  int NUM_J = 1039/10;
+  int NUM_K = 1057/10;
   float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> B("B", {NUM_J, NUM_K}, {Dense, Dense});
-  Tensor<double> C("C", {NUM_I, NUM_K}, {Dense, Dense});
+  Tensor<double> A("A", {NUM_I, NUM_K}, {Dense, Dense});
+  Tensor<double> B("B", {NUM_I, NUM_K}, CSR);
+  Tensor<double> C("C", {NUM_I, NUM_J}, {Dense, Dense});
+  Tensor<double> D("D", {NUM_J, NUM_K}, {Dense, Dense});
 
   //Populate tensors with random values
-  srand(120);
+  srand(268238);
   for (int i = 0; i < NUM_I; i++) {
     for (int j = 0; j < NUM_J; j++) {
       float rand_float = (float)rand()/(float)(RAND_MAX);
+      C.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
+    }
+  }
+
+  for (int i = 0; i < NUM_I; i++) {
+    for (int k = 0; k < NUM_K; k++) {
+      float rand_float = (float)rand()/(float)(RAND_MAX);
       if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
+        B.insert({i, k}, (double) ((int) (rand_float*3/SPARSITY)));
       }
     }
   }
@@ -467,26 +486,27 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   for (int j = 0; j < NUM_J; j++) {
     for (int k = 0; k < NUM_K; k++) {
       float rand_float = (float)rand()/(float)(RAND_MAX);
-      B.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
+      D.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
     }
   }
 
-  A.pack();
   B.pack();
+  C.pack();
+  D.pack();
 
   //Define tensor operation (spmv)
-  C(i, k) = A(i, j) * B(j, k);
+  A(i,k) = B(i,k) * C(i,j) * D(j,k);
 
   //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = C.getAssignment().concretize();
-  stmt = scheduleSpMMCPU(stmt, A, chunk_size);
+  IndexStmt stmt = A.getAssignment().concretize();
+  stmt = scheduleSpMMCPU(stmt, B); //, chunk_size, unroll_factor);
 
   taco::util::Timer timer;
 
-  C.compile(stmt);
-  C.assemble();
+  A.compile(stmt);
+  A.assemble();
   timer.start();
-  C.compute();
+  A.compute();
   timer.stop();
 
   Obj.compute_time = timer.getResult().mean;
@@ -630,7 +650,7 @@ int main(int argc, char **argv) {
 
   srand(0);
 
-  std::string test_name = "SpMM";
+  std::string test_name = "SDDMM";
 
   // Set these values accordingly
   std::string OutputFoldername = "outdata";
@@ -656,11 +676,9 @@ int main(int argc, char **argv) {
   std::vector<HMInputParamBase *> InParams;
 
   int numParams = collectInputParams(InParams, test_name);
-  std::cout << numParams << std::endl;
   for (auto param : InParams) {
     std::cout << "Param: " << *param << "\n";
   }
-  return -1;
 
   // Create json scenario
   std::string JSonFileNameStr =
