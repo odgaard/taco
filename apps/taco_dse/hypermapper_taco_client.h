@@ -61,9 +61,10 @@ private:
 public:
   HMInputParamBase(std::string _Name = "", ParamType _Type = ParamType::Integer,
                    DataType _DType = DataType::Int)
-      : Name(_Name), Key("x" + std::to_string(count++)), Type(_Type),
+      : Name(_Name), Key(_Name), Type(_Type),
         DType(_DType) {}
 
+      // : Name(_Name), Key("x" + std::to_string(count++)), Type(_Type),
   virtual ~HMInputParamBase(){}
 
   std::string getName() const { return Name; }

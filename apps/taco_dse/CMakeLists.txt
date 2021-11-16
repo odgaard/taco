@@ -4,7 +4,7 @@ if(POLICY CMP0048)
 endif()
 project(taco_dse)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -target x86_64-apple-darwin")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -g")
 file(GLOB SOURCE_CODE ${PROJECT_SOURCE_DIR}/*.cpp ${PROJECT_SOURCE_DIR}/*.h)
 add_executable(${PROJECT_NAME} ${SOURCE_CODE})
 
