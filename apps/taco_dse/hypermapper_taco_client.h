@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 template <class T> class HMInputParam;
 void fatalError(const std::string &msg);
@@ -110,6 +111,69 @@ public:
     out << "\n  Type: " << IP.getType();
     IP.print(out);
     return out;
+  }
+};
+
+inline int factorial(int n) {
+    int fact = 1;
+    for (int i = 2; i <= n; i++)
+        fact = fact * i;
+    return fact;
+}
+
+template <class T> class LoopReordering {
+private:
+  std::vector<T> reorder;
+  // std::vector< std::vector<T> > permutations;
+  T** permutations;
+  int num_orderings;
+public:
+  LoopReordering(std::vector<T> _reorder)
+    : reorder(_reorder), num_orderings(factorial(reorder.size())) {
+    permutations = new T*[num_orderings];
+    for(int i = 0; i < num_orderings; i++) {
+      permutations[i] = new T[reorder.size()];
+    }
+  }
+  ~LoopReordering() {
+    for(int i = 0; i < num_orderings; i++) {
+      // if(permutations[i])
+      //   delete [] permutations[i];
+    }
+    if(permutations)
+      delete [] permutations;
+  }
+  void compute_permutations() {
+    int count = 0;
+    do {
+      // permutations.push_back(reorder);
+      // permutations[count] = reorder.data();
+      memcpy((void *)permutations[count], (void *)reorder.data(), reorder.size() * sizeof(T));
+      count++;
+    } while(std::next_permutation(reorder.begin(), reorder.end()));
+  }
+  int get_num_reorderings() { return num_orderings; }
+  std::vector<T> get_reordering(std::vector<T> &reordering, int index) {
+    if(index > num_orderings) {
+      std::cerr << "Invalid index entered!" << std::endl;
+      exit(1);
+    }
+    std::vector<T> temp;
+
+    int size = static_cast<int>(reorder.size());
+    for(int i = 0; i < size; i++){
+      temp.push_back(permutations[index][i]);
+    }
+    return temp;
+  }
+  void print() {
+    int size = static_cast<int>(reorder.size());
+    for (int i = 0; i < num_orderings; i++) {
+      for (int j = 0; j < size; j++) {
+        std::cout << permutations[i][j] << " ";
+      }
+      std::cout << std::endl;
+    }
   }
 };
 
