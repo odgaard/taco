@@ -4,7 +4,7 @@ if(POLICY CMP0048)
 endif()
 project(taco_dse)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -g -lstdc++fs")
 file(GLOB SOURCE_CODE ${PROJECT_SOURCE_DIR}/*.cpp ${PROJECT_SOURCE_DIR}/*.h)
 add_executable(${PROJECT_NAME} ${SOURCE_CODE})
 
@@ -16,10 +16,10 @@ if (NOT TACO_INCLUDE_DIR)
   set(TACO_INCLUDE_DIR $ENV{TACO_INCLUDE_DIR})
   set(TACO_LIBRARY_DIR $ENV{TACO_LIBRARY_DIR})
   find_library(taco taco ${TACO_LIBRARY_DIR})
-  target_link_libraries(${PROJECT_NAME} LINK_PUBLIC ${taco})
+  target_link_libraries(${PROJECT_NAME} LINK_PUBLIC ${taco} stdc++fs)
 else()
   set_target_properties("${PROJECT_NAME}" PROPERTIES OUTPUT_NAME "taco-${PROJECT_NAME}")
-  target_link_libraries(${PROJECT_NAME} LINK_PUBLIC taco)
+  target_link_libraries(${PROJECT_NAME} LINK_PUBLIC taco stdc++fs)
 endif ()
 
 # Include taco headers

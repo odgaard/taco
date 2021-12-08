@@ -125,35 +125,48 @@ template <class T> class LoopReordering {
 private:
   std::vector<T> reorder;
   // std::vector< std::vector<T> > permutations;
-  T** permutations;
+  // T** permutations;
+  int **permutations;
+  int *index_arr;
   int num_orderings;
 public:
-  LoopReordering(std::vector<T> _reorder)
+  // TODO: Can't seem to work for IndexVar directly
+  LoopReordering(std::vector<T> &_reorder)
     : reorder(_reorder), num_orderings(factorial(reorder.size())) {
-    permutations = new T*[num_orderings];
+    // permutations = new T*[num_orderings];
+    permutations = new int*[num_orderings];
+    index_arr = new int[num_orderings];
     for(int i = 0; i < num_orderings; i++) {
-      permutations[i] = new T[reorder.size()];
+      // permutations[i] = new T[reorder.size()];
+      permutations[i] = new int[reorder.size()];
+      index_arr[i] = i;
     }
+    // std::cout << "num_orders: " << num_orderings << std::endl;
   }
   ~LoopReordering() {
+    // TODO: Figure out how to properly clear memory
+    delete [] index_arr;
     for(int i = 0; i < num_orderings; i++) {
-      // if(permutations[i])
-      //   delete [] permutations[i];
+      if(permutations[i])
+        delete [] permutations[i];
     }
     if(permutations)
       delete [] permutations;
   }
+  
   void compute_permutations() {
     int count = 0;
+    int reorder_size = reorder.size();
+    std::sort(index_arr, index_arr + reorder_size);
     do {
-      // permutations.push_back(reorder);
-      // permutations[count] = reorder.data();
-      memcpy((void *)permutations[count], (void *)reorder.data(), reorder.size() * sizeof(T));
+      memcpy((void *)permutations[count], (void *)index_arr, reorder_size * sizeof(int));
       count++;
-    } while(std::next_permutation(reorder.begin(), reorder.end()));
+    } while(std::next_permutation(index_arr, index_arr + reorder_size));
   }
+  
   int get_num_reorderings() { return num_orderings; }
-  std::vector<T> get_reordering(std::vector<T> &reordering, int index) {
+
+  std::vector<T> get_reordering(int index) {
     if(index > num_orderings) {
       std::cerr << "Invalid index entered!" << std::endl;
       exit(1);
@@ -161,11 +174,14 @@ public:
     std::vector<T> temp;
 
     int size = static_cast<int>(reorder.size());
+    int index_ptr;
     for(int i = 0; i < size; i++){
-      temp.push_back(permutations[index][i]);
+      index_ptr = permutations[index][i];
+      temp.push_back(reorder[index_ptr]);
     }
     return temp;
   }
+
   void print() {
     int size = static_cast<int>(reorder.size());
     for (int i = 0; i < num_orderings; i++) {

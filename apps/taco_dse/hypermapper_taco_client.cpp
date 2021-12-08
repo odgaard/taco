@@ -24,24 +24,56 @@
 #include "taco/lower/lower.h"
 
 #include "hypermapper_taco_client.h"
+#include "taco_helper.h"
 #include "json.hpp"
+
+SpMV *spmv_handler;
+SpMV *spmv_sparse_handler;
+SpMM *spmm_handler;
+SDDMM *sddmm_handler;
+TTV *ttv_handler;
+TTM *ttm_handler;
+bool initialized = false;
 
 using namespace std::chrono;
 using json = nlohmann::json;
 namespace fs = std::experimental::filesystem;
-const taco::IndexVar i("i"), j("j"), k("k"), l("l"), m("m"), n("n");
+// const taco::IndexVar i("i"), j("j"), k("k"), l("l"), m("m"), n("n");
 int WARP_SIZE = 32;
 float default_config_time = 0.0f;
 float no_sched_time = 0.0f;
 
-
-// popen2 implementation adapted from:
-// https://github.com/vi/syscall_limiter/blob/master/writelimiter/popen2.c
 struct popen2 {
   pid_t child_pid;
   int from_child, to_child;
 };
 
+int popen2(const char *cmdline, struct popen2 *childinfo);
+std::string createjson(std::string AppName, std::string OutputFoldername, int NumIterations,
+                  int NumDSERandomSamples, std::vector<HMInputParamBase *> &InParams,
+                  std::vector<std::string> Objectives, std::string taco_op, std::string optimization, std::string count);
+void fatalError(const std::string &msg);
+int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT);
+int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams);
+int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams);
+int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams);
+int collectInputParamsTTM(std::vector<HMInputParamBase *> &InParams);
+int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name);
+void deleteInputParams(std::vector<HMInputParamBase *> &InParams);
+auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key);
+void setInputValue(HMInputParamBase *Param, std::string ParamVal);
+taco::IndexStmt scheduleTTMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE, int UNROLL_FACTOR, int order);
+HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
+HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::ofstream &logger);
+
+
+// popen2 implementation adapted from:
+// https://github.com/vi/syscall_limiter/blob/master/writelimiter/popen2.c
 int popen2(const char *cmdline, struct popen2 *childinfo) {
   pid_t p;
   int pipe_stdin[2], pipe_stdout[2];
@@ -89,7 +121,7 @@ void fatalError(const std::string &msg) {
 // - Objectives: std::string with objective names
 std::string createjson(std::string AppName, std::string OutputFoldername, int NumIterations,
                   int NumDSERandomSamples, std::vector<HMInputParamBase *> &InParams,
-                  std::vector<std::string> Objectives) {
+                  std::vector<std::string> Objectives, std::string taco_op, std::string optimization, std::string count="0") {
 
   std::string CurrentDir = fs::current_path();
   std::string OutputDir = CurrentDir + "/" + OutputFoldername + "/";
@@ -108,24 +140,33 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   HMScenario["print_best"] = "auto";
   HMScenario["hypermapper_mode"]["mode"] = "client-server";
   HMScenario["run_directory"] = CurrentDir;
-  HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + ".log";
-  HMScenario["optimization_iterations"] = NumIterations;
-  HMScenario["optimization_method"] = "bayesian_optimization";
+  HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + "_" + taco_op + ".log";
+  if(optimization != "random_sampling") { 
+    HMScenario["optimization_method"] = optimization;
+    HMScenario["optimization_iterations"] = NumIterations;
+  }
+  else {
+    HMScenario["optimization_iterations"] = 0;
+  }
+
   // HMScenario["optimization_method"] = "local_search";
-  // HMScenario["models"]["model"] = "random_forest";
+  HMScenario["models"]["model"] = "random_forest";
 
   HMScenario["output_data_file"] =
-      OutputFoldername + "/" + AppName + "_output_data.csv";
+      OutputFoldername + "/" + AppName + "_" + taco_op + "_" + optimization + count + "_output_data.csv";
   HMScenario["output_pareto_file"] =
-      OutputFoldername + "/" + AppName + "_output_pareto.csv";
+      OutputFoldername + "/" + AppName + "_" + taco_op + "_output_pareto.csv";
   HMScenario["output_image"]["output_image_pdf_file"] =
-      OutputFoldername + "_" + AppName + "_output_image.pdf";
+      OutputFoldername + "_" + AppName + "_" + taco_op + "_output_image.pdf";
 
-  // json HMDOE;
-  // HMDOE["doe_type"] = "random sampling";
-  // HMDOE["number_of_samples"] = NumDSERandomSamples;
+  json HMDOE;
+  HMDOE["doe_type"] = "random sampling";
+  HMDOE["number_of_samples"] = NumDSERandomSamples;
+  if(optimization == "random_sampling") {
+    HMScenario["number_of_samples"] += NumIterations;
+  }
 
-  // HMScenario["design_of_experiment"] = HMDOE;
+  HMScenario["design_of_experiment"] = HMDOE;
 
   for (auto InParam : InParams) {
     json HMParam;
@@ -171,7 +212,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   ofstream HyperMapperScenarioFile;
 
   std::string JSonFileNameStr =
-      CurrentDir + "/" + OutputFoldername + "/" + AppName + "_scenario.json";
+      CurrentDir + "/" + OutputFoldername + "/" + AppName + "_" + taco_op + "_" + optimization + "_scenario.json";
 
   HyperMapperScenarioFile.open(JSonFileNameStr);
   if (HyperMapperScenarioFile.fail()) {
@@ -186,7 +227,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=0) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 256};
+  std::vector<int> chunkSizeRange{2, 512};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
@@ -197,21 +238,21 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 
   if(SPLIT) {
     std::vector<int> splitRange{0, 1};
-    HMInputParam<int> *splitParam = new HMInputParam<int>("split", ParamType::Integer);
+    HMInputParam<int> *splitParam = new HMInputParam<int>("split", ParamType::Categorical);
     splitParam->setRange(splitRange);
     InParams.push_back(splitParam);
     numParams++;
 
-    std::vector<int> chunkSize2Range{2, 32};
+    std::vector<int> chunkSize2Range{2, 512};
     HMInputParam<int> *chunkSize2Param = new HMInputParam<int>("chunk_size2", ParamType::Integer);
     chunkSize2Param->setRange(chunkSize2Range);
     InParams.push_back(chunkSize2Param);
     numParams++;
 
-    reorder_size = 4;
+    reorder_size++;
   }
 
-  int num_reorderings = factorial(reorder_size);
+  int num_reorderings = factorial(reorder_size) - 1;
   std::vector<int> reorderRange{0, num_reorderings};
   HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
   reorderParam->setRange(reorderRange);
@@ -225,8 +266,8 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 256};
-  std::vector<int> unrollFactorRange{2, 32};
+  std::vector<int> chunkSizeRange{2, 512};
+  std::vector<int> unrollFactorRange{2, 256};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
@@ -253,8 +294,8 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
 int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 256};
-  std::vector<int> unrollFactorRange{2, 32};
+  std::vector<int> chunkSizeRange{2, 512};
+  std::vector<int> unrollFactorRange{2, 256};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
@@ -281,7 +322,7 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
 int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 128};
+  std::vector<int> chunkSizeRange{2, 512};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
@@ -380,443 +421,6 @@ void setInputValue(HMInputParamBase *Param, std::string ParamVal) {
   }
 }
 
-//Function that performs the taco scheduling
-static taco::IndexStmt scheduleSpMVCPU(taco::IndexStmt stmt, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8, int order=0) {
-  using namespace taco;
-  IndexVar i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1");
-  if(SPLIT) {
-    std::vector<taco::IndexVar> reorder_{i0, i10, i11, j};
-    LoopReordering reorderings(reorder_);
-    reorderings.compute_permutations();
-    std::vector<taco::IndexVar> reorder = reorderings.get_reordering(reorder_, order);
-    return stmt.split(i, i0, i1, CHUNK_SIZE)
-      .split(i1, i10, i11, CHUNK_SIZE2)
-      .reorder(reorder)
-      .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-  }
-  std::vector<taco::IndexVar> reorder_{i0, i1, j};
-  std::vector<taco::IndexVar> temp(reorder_);
-  LoopReordering reorderings(temp);
-  reorderings.compute_permutations();
-  std::vector<taco::IndexVar> reorder = reorderings.get_reordering(reorder_, order);
-  return stmt.split(i, i0, i1, CHUNK_SIZE)
-          .reorder(reorder)
-          .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-}
-
-static taco::IndexStmt scheduleSpMMCPU(taco::IndexStmt stmt, taco::Tensor<double> A, int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
-  using namespace taco;
-  IndexVar i0("i0"), i1("i1"), kbounded("kbounded"), k0("k0"), k1("k1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1");
-  std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
-  // LoopReordering reorderings(reorder);
-  // reorderings.compute_permutations();
-  // reorderings.get_reordering(reorder, order);
-  std::vector<taco::IndexVar> temp(reorder_);
-  LoopReordering reorderings(temp);
-  reorderings.compute_permutations();
-  std::vector<taco::IndexVar> reorder = reorderings.get_reordering(reorder_, order);
-  return stmt.split(i, i0, i1, CHUNK_SIZE)
-          .pos(j, jpos, A(i,j))
-          .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
-          .reorder(reorder_)
-          .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
-          .parallelize(k, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
-}
-
-taco::IndexStmt scheduleSDDMMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
-  //TODO: Unroll factor needs to be less than the chunk size
-  using namespace taco;
-  IndexVar i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1");
-  std::vector<taco::IndexVar> reorder{i0, i1, kpos0, j, kpos1};
-  LoopReordering reorderings(reorder);
-  reorderings.compute_permutations();
-  reorderings.get_reordering(reorder, order);
-  return stmt.split(i, i0, i1, CHUNK_SIZE)
-          .pos(k, kpos, B(i,k))
-          .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
-          .reorder(reorder)
-          .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
-          .parallelize(kpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
-}
-
-taco::IndexStmt scheduleTTVCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE=16, int order=0) {
-  using namespace taco;
-  IndexVar f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2");
-  std::vector<taco::IndexVar> reorder_{chunk, fpos2, k};
-  // LoopReordering reorderings(reorder);
-  // reorderings.compute_permutations();
-  // reorderings.get_reordering(reorder, order);
-  std::vector<taco::IndexVar> temp(reorder_);
-  LoopReordering reorderings(temp);
-  reorderings.compute_permutations();
-  std::vector<taco::IndexVar> reorder = reorderings.get_reordering(reorder_, order);
-  return stmt.fuse(i, j, f)
-          .pos(f, fpos, B(i,j,k))
-          .split(fpos, chunk, fpos2, CHUNK_SIZE)
-          .reorder(reorder)
-          .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-}
-
-taco::IndexStmt scheduleTTMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
-  using namespace taco;
-  IndexVar f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), kpos("kpos"), kpos1("kpos1"), kpos2("kpos2");
-  std::vector<taco::IndexVar> reorder{chunk, fpos2, kpos1, l, kpos2};
-  LoopReordering reorderings(reorder);
-  reorderings.compute_permutations();
-  reorderings.get_reordering(reorder, order);
-  return stmt.fuse(i, j, f)
-          .pos(f, fpos, B(i,j,k))
-          .split(fpos, chunk, fpos2, CHUNK_SIZE)
-          .pos(k, kpos, B(i,j,k))
-          .split(kpos, kpos1, kpos2, UNROLL_FACTOR)
-          .reorder(reorder)
-          .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
-          .parallelize(kpos2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);;
-}
-
-void SpMVDefSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  int NUM_I = 10000;
-  int NUM_J = 10000;
-  float SPARSITY = .3;
-  Tensor<double> B("B", {NUM_I, NUM_J}, CSR);
-  Tensor<double> c("c", {NUM_J}, Format({Dense}));
-  Tensor<double> a("a", {NUM_I}, Format({Dense}));
-
-  //Populate tensors with random values
-  // srand(time(NULL));
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        B.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
-  }
-
-  for (int j = 0; j < NUM_J; j++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    c.insert({j}, (double) ((int) (rand_float*3/SPARSITY)));
-  }
-
-  c.pack();
-  B.pack();
-
-  //Define tensor operation (spmv)
-  a(i) = B(i, j) * c(j);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = a.getAssignment().concretize();
-  stmt = scheduleSpMVCPU(stmt);
-
-  taco::util::Timer timer;
-
-  a.compile();
-  a.assemble();
-  timer.start();
-  a.compute();
-  timer.stop();
-
-  int chunk_size = 16; // Default
-
-  logger << "SpMVDefSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void SpMVNoSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  float SPARSITY = .3;
-  Tensor<double> B("B", {NUM_I, NUM_J}, CSR);
-  Tensor<double> c("c", {NUM_J}, Format({Dense}));
-  Tensor<double> a("a", {NUM_I}, Format({Dense}));
-
-  //Populate tensors with random values
-  srand(time(NULL));
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        B.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
-  }
-
-  for (int j = 0; j < NUM_J; j++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    c.insert({j}, (double) ((int) (rand_float*3/SPARSITY)));
-  }
-
-  c.pack();
-  B.pack();
-
-  //Define tensor operation (spmv)
-  a(i) = B(i, j) * c(j);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = a.getAssignment().concretize();
-  stmt = scheduleSpMVCPU(stmt, 32);
-
-  taco::util::Timer timer;
-
-  a.compile();
-  a.assemble();
-  timer.start();
-  a.compute();
-  timer.stop();
-
-  no_sched_time = timer.getResult().mean;
-
-  int chunk_size = 0; // Default
-
-  logger << "SpMVNoSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void SpMMNoSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  int NUM_K = 128;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> B("B", {NUM_J, NUM_K}, {Dense, Dense});
-  Tensor<double> C("C", {NUM_I, NUM_K}, {Dense, Dense});
-
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
-  }
-
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      B.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
-  }
-
-  A.pack();
-  B.pack();
-
-  //Define tensor operation (spmv)
-  C(i, k) = A(i, j) * B(j, k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  // IndexStmt stmt = C.getAssignment().concretize();
-  // stmt = scheduleSpMMCPU(stmt, A, chunk_size, unroll_factor, order);
-
-  taco::util::Timer timer;
-
-  C.compile();
-  C.assemble();
-  timer.start();
-  C.compute();
-  timer.stop();
-  int chunk_size = 0; // Default
-
-  no_sched_time = timer.getResult().mean;
-
-  logger << "SpMVNoSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void SDDMMNoSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  int NUM_K = 128;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_K}, {Dense, Dense});
-  Tensor<double> B("B", {NUM_I, NUM_K}, CSR);
-  Tensor<double> C("C", {NUM_I, NUM_J}, {Dense, Dense});
-  Tensor<double> D("D", {NUM_J, NUM_K}, {Dense, Dense});
-
-  //Populate tensors with random values
-  srand(268238);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      C.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-    }
-  }
-
-  for (int i = 0; i < NUM_I; i++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        B.insert({i, k}, (double) ((int) (rand_float*3/SPARSITY)));
-      }
-    }
-  }
-
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      D.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
-  }
-
-  B.pack();
-  C.pack();
-  D.pack();
-
-  //Define tensor operation (spmv)
-  A(i,k) = B(i,k) * C(i,j) * D(j,k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = A.getAssignment().concretize();
-  stmt = scheduleSDDMMCPU(stmt, B, 32, 8);
-
-  taco::util::Timer timer;
-
-  A.compile();
-  A.assemble();
-  timer.start();
-  A.compute();
-  timer.stop();
-
-  no_sched_time = timer.getResult().mean;
-
-  int chunk_size = 0; // Default
-
-  logger << "SpMVNoSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void TTVNoSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  // int NUM_I = 1000;
-  // int NUM_J = 1000;
-  // int NUM_K = 128;
-  int NUM_I = 1021/10;
-  int NUM_J = 1039/10;
-  int NUM_K = 1057/10;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, {Dense, Dense}); // TODO: change to sparse outputs
-  Tensor<double> B("B", {NUM_I, NUM_J, NUM_K}, {Sparse, Sparse, Sparse});
-  Tensor<double> c("c", {NUM_K}, Format({Dense}));
-
-  //Populate tensors with random values
-  srand(9536);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      for (int k = 0; k < NUM_K; k++) {
-        float rand_float = (float) rand() / (float) (RAND_MAX);
-        if (rand_float < SPARSITY) {
-          B.insert({i, j, k}, (double) ((int) (rand_float * 3 / SPARSITY)));
-        }
-      }
-    }
-  }
-
-  for (int k = 0; k < NUM_K; k++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    c.insert({k}, (double) ((int) (rand_float*3)));
-  }
-
-  B.pack();
-  c.pack();
-
-  A(i,j) = B(i,j,k) * c(k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = A.getAssignment().concretize();
-  stmt = scheduleTTVCPU(stmt, B, 32);
-
-  taco::util::Timer timer;
-
-  A.compile();
-  A.assemble();
-  timer.start();
-  A.compute();
-  timer.stop();
-
-  no_sched_time = timer.getResult().mean;
-
-  int chunk_size = 0; // Default
-
-  logger << "SpMVNoSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void TTMNoSched(std::ofstream &logger) {
-  using namespace taco;
-
-  //Initialize tensors
-  // int NUM_I = 1000;
-  // int NUM_J = 1000;
-  // int NUM_K = 128;
-  int NUM_I = 1021/10;
-  int NUM_J = 1039/10;
-  int NUM_K = 1057/10;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> B("B", {NUM_J, NUM_K}, {Dense, Dense});
-  Tensor<double> C("C", {NUM_I, NUM_K}, {Dense, Dense});
-
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
-  }
-
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      B.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
-  }
-
-  A.pack();
-  B.pack();
-
-  //Define tensor operation (spmv)
-  C(i, k) = A(i, j) * B(j, k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = C.getAssignment().concretize();
-  stmt = scheduleTTMCPU(stmt, A, 256, 12, 0);
-
-  taco::util::Timer timer;
-
-  C.compile();
-  C.assemble();
-  timer.start();
-  C.compute();
-  timer.stop();
-
-  no_sched_time = timer.getResult().mean;
-
-  int chunk_size = 0; // Default
-
-  logger << "SpMVNoSched," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-}
-
-void clear_cache() {
-  const int bigger_than_cachesize = 100 * 1024 * 1024;
-  long *p = new long[bigger_than_cachesize];
-  // When you want to "flush" cache.
-  for(int i = 0; i < bigger_than_cachesize; i++) {
-      p[i] = rand();
-  }
-}
 
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
@@ -825,58 +429,23 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
 
-  //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> x("x", {NUM_J}, Format({Dense}));
-  Tensor<double> y("y", {NUM_I}, Format({Dense}));
-
-  if(no_sched_time == 0.0f)
-    SpMVNoSched(logger);
-
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
+  int NUM_I = 50000;
+  int NUM_J = 50000;
+  if(!initialized) {
+    spmv_handler = new SpMV(NUM_I, NUM_J);
+    spmv_handler->initialize_data();
+    initialized = true;
   }
 
-  for (int j = 0; j < NUM_J; j++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    x.insert({j}, (double) ((int) (rand_float*3/SPARSITY)));
-  }
+  spmv_handler->generate_schedule(chunk_size, 0, 0, order);
 
-  x.pack();
-  A.pack();
+  bool default_config = (chunk_size == 16 && order == 0);
+  spmv_handler->compute(default_config);
 
-  //Define tensor operation (spmv)
-  y(i) = A(i, j) * x(j);
+  Obj.compute_time = spmv_handler->get_compute_time();
 
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = y.getAssignment().concretize();
-  stmt = scheduleSpMVCPU(stmt, chunk_size, 0, order);
-
-  taco::util::Timer timer;
-
-  y.compile(stmt);
-  y.assemble();
-  timer.start();
-  y.compute();
-  timer.stop();
-
-  logger << "SpMV," << NUM_I << "," << chunk_size << "," << timer.getResult().mean << std::endl;
-
-  Obj.compute_time = timer.getResult().mean;
-  // if(Obj.compute_time > no_sched_time)
-  //   exit(1);
   if(chunk_size == 16 && order == 0) {
-    default_config_time = timer.getResult().mean;
+    default_config_time = spmv_handler->get_default_compute_time();
   }
   return Obj;
 }
@@ -890,57 +459,33 @@ HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputP
   int chunk_size2 = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
 
-  if(no_sched_time == 0.0f)
-    SpMVNoSched(logger);
+  // if(no_sched_time == 0.0f)
+  //   SpMVNoSched(logger);
+  int NUM_I = 50000;
+  int NUM_J = 50000;
 
   //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> x("x", {NUM_J}, Format({Dense}));
-  Tensor<double> y("y", {NUM_I}, Format({Dense}));
-
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
+  if(!initialized) {
+    spmv_sparse_handler = new SpMV(NUM_I, NUM_J);
+    spmv_sparse_handler->initialize_data();
+    initialized = true;
   }
-
-  for (int j = 0; j < NUM_J; j++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    x.insert({j}, (double) ((int) (rand_float*3/SPARSITY)));
-  }
-
-  x.pack();
-  A.pack();
-
-  //Define tensor operation (spmv)
-  y(i) = A(i, j) * x(j);
 
   //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = y.getAssignment().concretize();
-  stmt = scheduleSpMVCPU(stmt, chunk_size, split, chunk_size2);
+  spmv_sparse_handler->generate_schedule(chunk_size, split, chunk_size2, order);
 
-  taco::util::Timer timer;
+  bool default_config = (chunk_size == 16 && split == 0 && order == 0);
+  spmv_sparse_handler->compute(default_config);
 
-  y.compile(stmt);
-  y.assemble();
-  timer.start();
-  y.compute();
-  timer.stop();
+  Obj.compute_time = spmv_sparse_handler->get_compute_time();
 
-  Obj.compute_time = timer.getResult().mean;
-  if(chunk_size == 16 && split == 0 && order == 0) {
-    default_config_time = timer.getResult().mean;
+  if(chunk_size == 16 && order == 0 && split == 0) {
+    default_config_time = spmv_sparse_handler->get_default_compute_time();
   }
+
   return Obj;
 }
+
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
   using namespace taco;
@@ -949,61 +494,26 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
 
-  if(no_sched_time == 0.0f)
-    SpMMNoSched(logger);
+  int NUM_I = 10000;
+  int NUM_J = 10000;
+  int NUM_K = 1000;
 
-  //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  int NUM_K = 128;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> B("B", {NUM_J, NUM_K}, {Dense, Dense});
-  Tensor<double> C("C", {NUM_I, NUM_K}, {Dense, Dense});
-
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
+  if(!initialized) {
+    spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K);
+    spmm_handler->initialize_data();
+    initialized = true;
   }
 
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      B.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
-  }
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  spmm_handler->generate_schedule(chunk_size, unroll_factor, order);
 
-  A.pack();
-  B.pack();
+  bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
+  spmm_handler->compute(default_config);
 
-  //Define tensor operation (spmv)
-  C(i, k) = A(i, j) * B(j, k);
+  Obj.compute_time = spmm_handler->get_compute_time();
 
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = C.getAssignment().concretize();
-  stmt = scheduleSpMMCPU(stmt, A, chunk_size, unroll_factor, order);
-
-  taco::util::Timer timer;
-
-  C.compile(stmt);
-  C.assemble();
-  timer.start();
-  C.compute();
-  timer.stop();
-
-  Obj.compute_time = timer.getResult().mean;
-
-  // if(Obj.compute_time > no_sched_time)
-  //   exit(1);
-
-  if(chunk_size == 16 && unroll_factor == 8 && order == 0) {
-    default_config_time = timer.getResult().mean;
+  if(default_config) {
+    default_config_time = spmm_handler->get_default_compute_time();
   }
   return Obj;
 }
@@ -1016,70 +526,27 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
 
-  if(no_sched_time == 0.0f)
-    SDDMMNoSched(logger);
-
   //Initialize tensors
-  int NUM_I = 1000;
-  int NUM_J = 1000;
-  int NUM_K = 128;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_K}, {Dense, Dense});
-  Tensor<double> B("B", {NUM_I, NUM_K}, CSR);
-  Tensor<double> C("C", {NUM_I, NUM_J}, {Dense, Dense});
-  Tensor<double> D("D", {NUM_J, NUM_K}, {Dense, Dense});
+  int NUM_I = 10000;
+  int NUM_J = 10000;
+  int NUM_K = 1000;
 
-  //Populate tensors with random values
-  srand(268238);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      C.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-    }
+  if(!initialized) {
+    sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
+    sddmm_handler->initialize_data();
+    initialized = true;
   }
 
-  for (int i = 0; i < NUM_I; i++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        B.insert({i, k}, (double) ((int) (rand_float*3/SPARSITY)));
-      }
-    }
-  }
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  sddmm_handler->generate_schedule(chunk_size, unroll_factor, order);
 
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      D.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
-  }
+  bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
+  sddmm_handler->compute(default_config);
 
-  B.pack();
-  C.pack();
-  D.pack();
+  Obj.compute_time = sddmm_handler->get_compute_time();
 
-  //Define tensor operation (spmv)
-  A(i,k) = B(i,k) * C(i,j) * D(j,k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = A.getAssignment().concretize();
-  stmt = scheduleSDDMMCPU(stmt, B, chunk_size, unroll_factor);
-
-  taco::util::Timer timer;
-
-  A.compile(stmt);
-  A.assemble();
-  timer.start();
-  A.compute();
-  timer.stop();
-
-  Obj.compute_time = timer.getResult().mean;
-
-  // if(Obj.compute_time > no_sched_time)
-  //   exit(1);
-
-  if(chunk_size == 16 && unroll_factor == 8 && order == 0) {
-    default_config_time = timer.getResult().mean;
+  if(default_config) {
+    default_config_time = sddmm_handler->get_default_compute_time();
   }
   return Obj;
 }
@@ -1091,63 +558,28 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
 
-  if(no_sched_time == 0.0f)
-    TTVNoSched(logger);
-  //Initialize tensors
-  int NUM_I = 1021/10;
-  int NUM_J = 1039/10;
-  int NUM_K = 1057/10;
-  // int NUM_I = 1000;
-  // int NUM_J = 1000;
-  // int NUM_K = 128;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, {Dense, Dense}); // TODO: change to sparse outputs
-  Tensor<double> B("B", {NUM_I, NUM_J, NUM_K}, {Sparse, Sparse, Sparse});
-  Tensor<double> c("c", {NUM_K}, Format({Dense}));
+  int NUM_I = 10000;
+  int NUM_J = 10000;
+  int NUM_K = 1000;
 
-  //Populate tensors with random values
-  srand(9536);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      for (int k = 0; k < NUM_K; k++) {
-        float rand_float = (float) rand() / (float) (RAND_MAX);
-        if (rand_float < SPARSITY) {
-          B.insert({i, j, k}, (double) ((int) (rand_float * 3 / SPARSITY)));
-        }
-      }
-    }
+  if(!initialized) {
+    ttv_handler = new TTV(NUM_I, NUM_J, NUM_K);
+    ttv_handler->initialize_data();
+    initialized = true;
   }
 
-  for (int k = 0; k < NUM_K; k++) {
-    float rand_float = (float)rand()/(float)(RAND_MAX);
-    c.insert({k}, (double) ((int) (rand_float*3)));
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  ttv_handler->generate_schedule(chunk_size, order);
+
+  bool default_config = (chunk_size == 16 && order == 0);
+  ttv_handler->compute(default_config);
+
+  Obj.compute_time = ttv_handler->get_compute_time();
+
+  if(default_config) {
+    default_config_time = ttv_handler->get_default_compute_time();
   }
 
-  B.pack();
-  c.pack();
-
-  A(i,j) = B(i,j,k) * c(k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = A.getAssignment().concretize();
-  stmt = scheduleTTVCPU(stmt, B, chunk_size);
-
-  taco::util::Timer timer;
-
-  A.compile(stmt);
-  A.assemble();
-  timer.start();
-  A.compute();
-  timer.stop();
-
-  Obj.compute_time = timer.getResult().mean;
-
-  // if(Obj.compute_time > no_sched_time)
-  //   exit(1);
-
-  if(chunk_size == 16 && order == 0) {
-    default_config_time = timer.getResult().mean;
-  }
   return Obj;
 }
 
@@ -1159,64 +591,28 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
 
-  if(no_sched_time == 0.0f)
-    TTMNoSched(logger);
-  //Initialize tensors
-  // int NUM_I = 1000;
-  // int NUM_J = 1000;
-  // int NUM_K = 128;
-  int NUM_I = 1021/10;
-  int NUM_J = 1039/10;
-  int NUM_K = 1057/10;
-  float SPARSITY = .3;
-  Tensor<double> A("A", {NUM_I, NUM_J}, CSR);
-  Tensor<double> B("B", {NUM_J, NUM_K}, {Dense, Dense});
-  Tensor<double> C("C", {NUM_I, NUM_K}, {Dense, Dense});
+  int NUM_I = 10000;
+  int NUM_J = 10000;
+  int NUM_K = 1000;
 
-  //Populate tensors with random values
-  srand(120);
-  for (int i = 0; i < NUM_I; i++) {
-    for (int j = 0; j < NUM_J; j++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      if (rand_float < SPARSITY) {
-        A.insert({i, j}, (double) ((int) (rand_float * 3 / SPARSITY)));
-      }
-    }
+  if(!initialized) {
+    ttm_handler = new TTM(NUM_I, NUM_J, NUM_K);
+    ttm_handler->initialize_data();
+    initialized = true;
   }
 
-  for (int j = 0; j < NUM_J; j++) {
-    for (int k = 0; k < NUM_K; k++) {
-      float rand_float = (float)rand()/(float)(RAND_MAX);
-      B.insert({j, k}, (double) ((int) (rand_float*3/SPARSITY)));
-    }
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  ttm_handler->generate_schedule(chunk_size, unroll_factor, order);
+
+  bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
+  ttm_handler->compute(default_config);
+
+  Obj.compute_time = ttm_handler->get_compute_time();
+
+  if(default_config) {
+    default_config_time = ttm_handler->get_default_compute_time();
   }
 
-  A.pack();
-  B.pack();
-
-  //Define tensor operation (spmv)
-  C(i, k) = A(i, j) * B(j, k);
-
-  //Initiate SpMV scheduling passing in chunk_size (param to optimize)
-  IndexStmt stmt = C.getAssignment().concretize();
-  stmt = scheduleTTMCPU(stmt, A, chunk_size, unroll_factor, order);
-
-  taco::util::Timer timer;
-
-  C.compile(stmt);
-  C.assemble();
-  timer.start();
-  C.compute();
-  timer.stop();
-
-  Obj.compute_time = timer.getResult().mean;
-
-  // if(Obj.compute_time > no_sched_time)
-  //   exit(1);
-
-  if(chunk_size == 16 && unroll_factor == 8 && order == 0) {
-    default_config_time = timer.getResult().mean;
-  }
   return Obj;
 }
 
@@ -1241,16 +637,28 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 int main(int argc, char **argv) {
 
+    setenv("HYPERMAPPER_HOME", "/home/rubensl/hypermapper_dev", true);
+    printf("Setting HM variable\n");
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
     ErrMsg += "Please set HYPERMAPPER_HOME before running this ";
-    fatalError(ErrMsg);
+    // fatalError(ErrMsg);
   }
 
   srand(0);
 
   // std::string test_name = "SpMM";
-  std::string test_name = argv[1];
+  std::string test_name, optimization;
+  if (argv[1] == nullptr)
+    test_name = "SpMV";
+  else 
+    test_name = argv[1];
+  if (argv[2] == nullptr)
+    optimization = "bayesian_optimization";
+  else
+    optimization = argv[2];
+
+  std::string count = argv[3];
   std::string log_file = "hypermapper_taco_log.csv";
 
   bool log_exists = fs::exists(log_file);
@@ -1265,7 +673,7 @@ int main(int argc, char **argv) {
   std::string OutputFoldername = "outdata";
   std::string AppName = "cpp_taco";
   int NumIterations = 80;
-  int NumSamples = 20;
+  int NumSamples = 10;
   std::vector<std::string> Objectives = {"compute_time"};
 
   // Create output directory if it doesn't exist
@@ -1292,7 +700,7 @@ int main(int argc, char **argv) {
   // Create json scenario
   std::string JSonFileNameStr =
       createjson(AppName, OutputFoldername, NumIterations,
-                 NumSamples, InParams, Objectives);
+                 NumSamples, InParams, Objectives, test_name, optimization, count);
 
   // Launch HyperMapper
   std::string cmd("python3 ");
@@ -1396,9 +804,9 @@ int main(int argc, char **argv) {
   cmdPareto += getenv("HYPERMAPPER_HOME");
   cmdPareto += "/scripts/plot_optimization_results.py -j";
   cmdPareto += " " + JSonFileNameStr;
-  cmdPareto += " -i outdata";
+  cmdPareto += " -i outdata -o " + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
-  cmdPareto += " " + to_string(no_sched_time);
+  // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
   fp = popen(cmdPareto.c_str(), "r");
   while (fgets(buffer, max_buffer, fp))
