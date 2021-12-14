@@ -182,6 +182,18 @@ public:
     return temp;
   }
 
+  void get_reordering(std::vector<T>& temp, std::vector<int> reordering) {
+    int size = static_cast<int>(reordering.size());
+    // std::vector<T> temp;
+    int index_ptr;
+    for(int i = 0; i < size; i++) {
+      index_ptr = reordering[i];
+      temp.push_back(reorder[index_ptr]);
+      // temp[i] = (reorder[index_ptr]);
+    }
+    // return temp;
+  }
+
   void print() {
     int size = static_cast<int>(reorder.size());
     for (int i = 0; i < num_orderings; i++) {

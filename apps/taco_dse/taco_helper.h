@@ -20,10 +20,14 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <functional>
+#include <utility>
 
+#include "taco/util/strings.h"
 #include "taco/tensor.h"
+#include <cstdlib>
 #include "taco/index_notation/index_notation.h"
 #include "taco/index_notation/transformations.h"
+// #include "taco/codegen/codegen.h"
 #include "taco/lower/lower.h"
 #include "hypermapper_taco_client.h"
 
@@ -35,6 +39,71 @@ const taco::IndexVar i("i"), j("j"), k("k"), l("l"), m("m"), n("n");
 // const auto taco::ModeFormat::Sparse = taco::Modetaco::Format::taco::ModeFormat::Sparse;
 // using namespace taco;
 using namespace std;
+namespace fs = std::experimental::filesystem;
+
+typedef struct SuiteSparseTensors {
+    SuiteSparseTensors() {
+        //    auto ssTensorPath = getTacoTensorPath();
+        // auto ssTensorPath = "";
+        // ssTensorPath += "suitesparse/";
+        auto ssTensorPath = std::getenv("SUITESPARSE_PATH");
+        if(ssTensorPath == nullptr) {
+            std::cout << "Set SUITESPARSE_PATH" << std::endl;
+            exit(1);
+        }
+        if (fs::exists(ssTensorPath)) {
+            for (auto& entry : fs::directory_iterator(ssTensorPath)) {
+            std::string f(entry.path());
+            // Check that the filename ends with .mtx.
+                if (f.compare(f.size() - 4, 4, ".mtx") == 0) {
+                    this->tensors.push_back(entry.path());
+                }
+            }
+        }
+    }
+
+    std::vector<std::string> tensors;
+} ssTensors;
+// SuiteSparseTensors ssTensors;
+
+struct UfuncInputCache {
+  template<typename U>
+  std::pair<taco::Tensor<double>, taco::Tensor<double>> getUfuncInput(std::string path, U format, bool countNNZ = false, bool includeThird = false) {
+    // See if the paths match.
+    if (this->lastPath == path) {
+      // TODO (rohany): Not worrying about whether the format was the same as what was asked for.
+      return std::make_pair(this->inputTensor, this->otherTensor);
+    }
+
+    // Otherwise, we missed the cache. Load in the target tensor and process it.
+    std::cout << path << std::endl;
+    this->lastLoaded = taco::read(path, format);
+    // We assign lastPath after lastLoaded so that if taco::read throws an exception
+    // then lastPath isn't updated to the new path.
+    this->lastPath = path;
+    this->inputTensor = lastLoaded;
+    this->otherTensor = this->inputTensor;
+    if (countNNZ) {
+      this->nnz = 0;
+      for (auto& it : taco::iterate<double>(this->inputTensor)) {
+        this->nnz++;
+      }
+    }
+    // if (includeThird) {
+    //   this->thirdTensor = shiftLastMode<int64_t, int64_t>("C", this->otherTensor);
+    // }
+    return std::make_pair(this->inputTensor, this->otherTensor);
+  }
+
+  taco::Tensor<double> lastLoaded;
+  std::string lastPath;
+
+  taco::Tensor<double> inputTensor;
+  taco::Tensor<double> otherTensor;
+//   taco::Tensor<int64_t> thirdTensor;
+  int nnz;
+};
+UfuncInputCache inputCache;
 
 class tacoOp {
 public:
@@ -51,13 +120,30 @@ public:
         // TODO: Figure out how to reuse the same ordering addresses
         // if(reorder_initialized) 
         //     return;
+        // TODO: Remove
+        // return;
         reorderings = new LoopReordering(ordering);
         reorderings->compute_permutations();
+    }
+    std::pair<taco::Tensor<double>, taco::Tensor<double>> load_tensor(std::string tensorPath) {
+        auto suitesparsePath = std::getenv("SUITESPARSE_PATH");
+        if(suitesparsePath == nullptr) {
+            std::cout << "Set SUITESPARSE_PATH" << std::endl;
+            exit(1);
+        }
+        // std::string fullpath = std::string(suitesparsePath) + "/" + tensorPath;
+        return inputCache.getUfuncInput(tensorPath, taco::CSR, true);
     }
     std::vector<taco::IndexVar> get_reordering(int index) {
         std::vector<taco::IndexVar> temp(reorderings->get_reordering(index));
         // delete reorderings;
         return temp;
+    }
+    std::vector<taco::IndexVar> get_reordering(std::vector<int> reordering) {
+        // std::vector<taco::IndexVar> temp(reorderings->get_reordering(reordering));
+    }
+    void get_reordering(std::vector<taco::IndexVar>& reordering_out, std::vector<int> reordering) {
+        (reorderings->get_reordering(reordering_out, reordering));
     }
 };
 
@@ -85,33 +171,44 @@ public:
                                                                       c("c", {NUM_J}, taco::Format{taco::ModeFormat::Dense}),
                                                                       a("a", {NUM_I}, taco::Format{taco::ModeFormat::Dense}),
                                                                       i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
+    SpMV() : initialized{false},
+             reorder_initialized{false},
+             cold_run{true},
+             i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
     void initialize_data(int mode = RANDOM) override
     {
         using namespace taco;
         //TODO: Implement read from matrix market mode
         if (initialized)
             return;
-        srand(120);
-        for (int i = 0; i < NUM_I; i++)
-        {
+
+        if(mode == MTX) {
+            ssTensors test;
+            std::tie(B, c) = load_tensor(test.tensors[10]);
+        }
+        else {
+            srand(120);
+            for (int i = 0; i < NUM_I; i++)
+            {
+                for (int j = 0; j < NUM_J; j++)
+                {
+                    float rand_float = (float)rand() / (float)(RAND_MAX);
+                    if (rand_float < SPARSITY)
+                    {
+                        B.insert({i, j}, (double)((int)(rand_float * 3 / SPARSITY)));
+                    }
+                }
+            }
+
             for (int j = 0; j < NUM_J; j++)
             {
                 float rand_float = (float)rand() / (float)(RAND_MAX);
-                if (rand_float < SPARSITY)
-                {
-                    B.insert({i, j}, (double)((int)(rand_float * 3 / SPARSITY)));
-                }
+                c.insert({j}, (double)((int)(rand_float * 3 / SPARSITY)));
             }
-        }
 
-        for (int j = 0; j < NUM_J; j++)
-        {
-            float rand_float = (float)rand() / (float)(RAND_MAX);
-            c.insert({j}, (double)((int)(rand_float * 3 / SPARSITY)));
+            c.pack();
+            B.pack();
         }
-
-        c.pack();
-        B.pack();
 
         // taco::util::Timer timer;
         // timer.start();
@@ -122,6 +219,26 @@ public:
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
         initialized = true;
+    }
+    taco::IndexStmt schedule(std::vector<int> order, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8) {
+        using namespace taco;
+        if(SPLIT) {
+            std::vector<taco::IndexVar> reorder = get_reordering(order);
+            return stmt.split(i, i0, i1, CHUNK_SIZE)
+            .split(i1, i10, i11, CHUNK_SIZE2)
+            .reorder(reorder)
+            .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+        }
+        // std::vector<taco::IndexVar> reorder = get_reordering(order);
+        std::vector<taco::IndexVar> reorder;
+        reorder.reserve(order.size());
+        // auto reorder = get_reordering(order);
+        get_reordering(reorder, order);
+        // std::cout << reorder << std::endl;
+        // exit(0);
+        return stmt.split(i, i0, i1, CHUNK_SIZE)
+                .reorder(reorder)
+                .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
     taco::IndexStmt schedule(int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8, int order=0) {
         using namespace taco;
@@ -136,6 +253,12 @@ public:
         return stmt.split(i, i0, i1, CHUNK_SIZE)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+    }
+    void generate_schedule(int chunk_size, int split, int chunk_size2, std::vector<int> order) {
+        a(i) = B(i,j) * c(j);
+
+        stmt = a.getAssignment().concretize();
+        stmt = schedule(order, chunk_size, split, chunk_size2);
     }
     void generate_schedule(int chunk_size, int split, int chunk_size2, int order) {
         a(i) = B(i,j) * c(j);
@@ -170,6 +293,13 @@ public:
     }
 
 };
+
+void printToCout(taco::IndexStmt stmt) {
+//   using namespace taco;
+//   std::shared_ptr<ir::CodeGen> codegen = ir::CodeGen::init_default(cout, ir::CodeGen::ImplementationGen);
+//   ir::Stmt compute = lower(stmt, "compute", false, true);
+//   codegen->compile(compute, true);
+}
 
 class SpMM : public tacoOp {
 public:
@@ -227,6 +357,7 @@ public:
         B.pack();
         C.pack();
 
+        A(i, k) = B(i, j) * C(j, k);
         std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
@@ -243,7 +374,7 @@ public:
                 .parallelize(k, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
     }
     void generate_schedule(int chunk_size, int unroll_factor, int order) {
-        A(i, k) = B(i, j) * C(j, k);
+        // A(i, k) = B(i, j) * C(j, k);
 
         stmt = A.getAssignment().concretize();
         stmt = schedule(chunk_size, unroll_factor, order);
@@ -255,14 +386,15 @@ public:
     }
     void compute(bool default_config = false) override
     {
-        // if(cold_run) {
-        //     compute_cold_run();
-        //     cold_run = false;
-        // }
+        if(cold_run) {
+            compute_cold_run();
+            cold_run = false;
+        }
         taco::util::Timer timer;
 
-        A(i, k) = B(i, j) * C(j, k);
+        // A(i, k) = B(i, j) * C(j, k);
         A.compile(stmt);
+        printToCout(stmt);
         A.assemble();
         timer.start();
         A.compute();
