@@ -191,6 +191,7 @@ public:
       temp.push_back(reorder[index_ptr]);
       // temp[i] = (reorder[index_ptr]);
     }
+    // std::cout << reordering << std::endl;
     // return temp;
   }
 

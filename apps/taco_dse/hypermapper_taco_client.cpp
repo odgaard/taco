@@ -43,6 +43,9 @@ int WARP_SIZE = 32;
 float default_config_time = 0.0f;
 float no_sched_time = 0.0f;
 int num_loops = 0;
+float sparsity = 0.0f;
+int num_j = 0;
+std::string op;
 
 struct popen2 {
   pid_t child_pid;
@@ -151,7 +154,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   }
 
   // HMScenario["optimization_method"] = "local_search";
-  HMScenario["models"]["model"] = "random_forest";
+  // HMScenario["models"]["model"] = "random_forest";
+  HMScenario["models"]["model"] = "gaussian_process";
 
   HMScenario["output_data_file"] =
       OutputFoldername + "/" + AppName + "_" + taco_op + "_" + optimization + count + "_output_data.csv";
@@ -210,11 +214,11 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
               // int i = 0;
               // for(int i = 0; i < num_loops; i++) {
                 int current_idx = std::stoi(std::string(1, param.back()));
-                int i = current_idx - 1;
+                // int i = current_idx - 1;
                 std::vector<int> consts;
-                consts.push_back(i);
-                if(last_idx == num_loops - 1) {
-                  consts.push_back(0);
+                // consts.push_back(i);
+                for(int i = current_idx - 1; i >= 0; i--) {
+                  consts.push_back(i);
                 }
                 for(auto idx : consts) {
                   constraint.push_back(param + " != loop" + std::to_string(idx));
@@ -227,8 +231,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
               HMParam["dependencies"] = json(dependency);
             }
             else {
-              constraint.push_back(param + " > -1");
-              HMParam["constraints"] = json(constraint);
+              // constraint.push_back(param + " > -1");
+              // HMParam["constraints"] = json(constraint);
             }
             HMParam["parameter_default"] = last_idx;
         }
@@ -315,13 +319,23 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(unrollFactorParam);
   numParams++;
 
-  int reorder_size = 4;
-  int num_reorderings = factorial(reorder_size) - 1;
-  std::vector<int> reorderRange{0, num_reorderings};
-  HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
-  reorderParam->setRange(reorderRange);
-  InParams.push_back(reorderParam);
-  numParams++;
+  int reorder_size = 5;
+  // int num_reorderings = factorial(reorder_size) - 1;
+  // std::vector<int> reorderRange{0, num_reorderings};
+  // HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
+  // reorderParam->setRange(reorderRange);
+  // InParams.push_back(reorderParam);
+  // numParams++;
+
+  std::vector<int> reorderRange{0, reorder_size - 1};
+  for(int i = 0; i < reorder_size; i++) {
+    HMInputParam<int> *reorderParam = new HMInputParam<int>("loop" + std::to_string(i), ParamType::Integer);
+    reorderParam->setRange(reorderRange);
+    InParams.push_back(reorderParam);
+    numParams++;
+  }
+
+  num_loops = reorder_size;
 
   return numParams;
 }
@@ -477,7 +491,8 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   int NUM_I = 10000;
   int NUM_J = 10000;
   if(!initialized) {
-    spmv_handler = new SpMV(NUM_I, NUM_J);
+    // spmv_handler = new SpMV(NUM_I, NUM_J);
+    spmv_handler = new SpMV();
     spmv_handler->initialize_data(1);
     initialized = true;
   }
@@ -537,23 +552,41 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  // int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
 
-  int NUM_I = 5000;
-  int NUM_J = 5000;
-  int NUM_K = 1000;
-
-  if(!initialized) {
-    spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K);
-    spmm_handler->initialize_data();
-    initialized = true;
+  std::vector<int> default_ordering;
+  std::vector<int> loop_ordering;
+  for(int i = 0; i < num_loops; i++) {
+    // std::cout << "in here\n";
+    int order = static_cast<HMInputParam<int>*>(InputParams[i + 2])->getVal();
+    loop_ordering.push_back(order);
+    default_ordering.push_back(i);
   }
 
-  //Initiate scheduling passing in chunk_size (param to optimize)
-  spmm_handler->generate_schedule(chunk_size, unroll_factor, order);
+  int NUM_I = 500;
+  int NUM_J = 500;
+  int NUM_K = 100;
+  // float sparsity = .999722;
 
-  bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
-  int num_reps = 3;
+  if(!initialized) {
+    // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
+    spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K);
+    // spmm_handler = new SpMM();
+    spmm_handler->initialize_data(0);
+    // spmm_handler->initialize_data(1);
+    initialized = true;
+    sparsity = spmm_handler->get_sparsity();
+    num_j = spmm_handler->get_num_j();
+    op = "SpMM";
+  }
+
+
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  // spmm_handler->generate_schedule(chunk_size, unroll_factor, order);
+  spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+
+  bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
+  int num_reps = 20;
   double total_time = 0.0;
   for(int i = 0; i < num_reps; i++) {
     spmm_handler->compute(default_config);
@@ -724,8 +757,9 @@ int main(int argc, char **argv) {
   // Set these values accordingly
   std::string OutputFoldername = "outdata";
   std::string AppName = "cpp_taco";
-  int NumIterations = 80;
-  int NumSamples = 10;
+  int dimensionality_plus_one = 4;
+  int NumSamples = dimensionality_plus_one;
+  int NumIterations = NumSamples * 30;
   std::vector<std::string> Objectives = {"compute_time"};
 
   // Create output directory if it doesn't exist
@@ -859,6 +893,8 @@ int main(int argc, char **argv) {
   cmdPareto += " " + JSonFileNameStr;
   cmdPareto += " -i outdata -o " + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
+  cmdPareto += " -t " + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
+  cmdPareto += " -doe ";
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
   fp = popen(cmdPareto.c_str(), "r");
