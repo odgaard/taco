@@ -729,7 +729,7 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 int main(int argc, char **argv) {
 
-    setenv("HYPERMAPPER_HOME", "/home/rubensl/hypermapper_dev", true);
+    // setenv("HYPERMAPPER_HOME", "/home/rubensl/hypermapper_dev", true);
     printf("Setting HM variable\n");
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
