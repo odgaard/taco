@@ -188,6 +188,13 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
           HMParam["dependencies"] = json(dependency);
         }
         else if(InParam->getName() == "chunk_size") {
+          std::vector<std::string> constraint;
+          // constraint.push_back("(chunk_size & (chunk_size - 1)) == 0");
+          constraint.push_back("chunk_size % 2 == 0");
+          HMParam["constraints"] = json(constraint);
+          // std::vector<std::string> dependency;
+          // dependency.push_back("chunk_size");
+          // HMParam["dependencies"] = json(dependency);
           HMParam["parameter_default"] = 16;
         }
         else if(InParam->getName() == "reordering") {
@@ -306,8 +313,8 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 512};
-  std::vector<int> unrollFactorRange{2, 256};
+  std::vector<int> chunkSizeRange{1, 1024};
+  std::vector<int> unrollFactorRange{1, 1024};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
   chunkSizeParam->setRange(chunkSizeRange);
@@ -563,17 +570,17 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     default_ordering.push_back(i);
   }
 
-  int NUM_I = 500;
-  int NUM_J = 500;
-  int NUM_K = 100;
-  // float sparsity = .999722;
+  int NUM_I = 67173;
+  int NUM_J = 67173;
+  int NUM_K = 1000;
+  float _sparsity = .982356;
 
   if(!initialized) {
     // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
-    spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K);
-    // spmm_handler = new SpMM();
-    spmm_handler->initialize_data(0);
-    // spmm_handler->initialize_data(1);
+    // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
+    spmm_handler = new SpMM();
+    // spmm_handler->initialize_data(0);
+    spmm_handler->initialize_data(1);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
     num_j = spmm_handler->get_num_j();
