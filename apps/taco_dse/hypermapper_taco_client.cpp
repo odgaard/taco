@@ -669,6 +669,9 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     sddmm_handler = new SDDMM();
     sddmm_handler->initialize_data(1);
     initialized = true;
+    sparsity = sddmm_handler->get_sparsity();
+    num_j = sddmm_handler->get_num_j();
+    op = "SDDMM";
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
