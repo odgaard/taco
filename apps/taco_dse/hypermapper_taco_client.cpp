@@ -204,6 +204,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
           HMParam["parameter_default"] = 8;
           std::vector<std::string> constraint;
           constraint.push_back("unroll_factor < chunk_size");
+          constraint.push_back("unroll_factor % 2 == 0");
           HMParam["constraints"] = json(constraint);
           std::vector<std::string> dependency;
           dependency.push_back("chunk_size");
@@ -313,16 +314,18 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{1, 1024};
-  std::vector<int> unrollFactorRange{1, 1024};
+  // std::vector<int> chunkSizeRange{1, 1024};
+  // std::vector<int> unrollFactorRange{1, 1024};
+  std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
+  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
-  chunkSizeParam->setRange(chunkSizeRange);
+  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
+  chunkSizeParam->setRange(chunkSizeValues);
   InParams.push_back(chunkSizeParam);
   numParams++;
 
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Integer);
-  unrollFactorParam->setRange(unrollFactorRange);
+  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
+  unrollFactorParam->setRange(unrollFactorValues);
   InParams.push_back(unrollFactorParam);
   numParams++;
 
@@ -365,12 +368,24 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
   numParams++;
 
   int reorder_size = 5;
-  int num_reorderings = factorial(reorder_size) - 1;
-  std::vector<int> reorderRange{0, num_reorderings};
-  HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
-  reorderParam->setRange(reorderRange);
-  InParams.push_back(reorderParam);
-  numParams++;
+
+  std::vector<int> reorderRange{0, reorder_size - 1};
+  for(int i = 0; i < reorder_size; i++) {
+    HMInputParam<int> *reorderParam = new HMInputParam<int>("loop" + std::to_string(i), ParamType::Integer);
+    reorderParam->setRange(reorderRange);
+    InParams.push_back(reorderParam);
+    numParams++;
+  }
+
+  num_loops = reorder_size;
+
+  // int reorder_size = 5;
+  // int num_reorderings = factorial(reorder_size) - 1;
+  // std::vector<int> reorderRange{0, num_reorderings};
+  // HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
+  // reorderParam->setRange(reorderRange);
+  // InParams.push_back(reorderParam);
+  // numParams++;
 
   return numParams;
 }
@@ -553,6 +568,21 @@ HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputP
   return Obj;
 }
 
+double median(vector<double> vec)
+{
+        typedef vector<int>::size_type vec_sz;
+
+        vec_sz size = vec.size();
+        if (size == 0)
+                throw domain_error("median of an empty vector");
+
+        sort(vec.begin(), vec.end());
+
+        vec_sz mid = size/2;
+
+        return size % 2 == 0 ? (vec[mid] + vec[mid-1]) / 2 : vec[mid];
+}
+
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
   using namespace taco;
@@ -579,7 +609,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
     // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
     spmm_handler = new SpMM();
-    // spmm_handler->initialize_data(0);
+    // spmm_handler->initialize_data();
     spmm_handler->initialize_data(1);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
@@ -593,14 +623,17 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
   bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  int num_reps = 20;
+  int num_reps = 10;
   double total_time = 0.0;
+  std::vector<double> compute_times;
   for(int i = 0; i < num_reps; i++) {
     spmm_handler->compute(default_config);
-    total_time += spmm_handler->get_compute_time();
+    total_time = spmm_handler->get_compute_time();
+    compute_times.push_back(total_time);
   }
 
-  double compute_time = total_time / num_reps;
+  // double compute_time = total_time / num_reps;
+  double compute_time = median(compute_times);
 
   Obj.compute_time = compute_time;
 
@@ -616,7 +649,15 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  // int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+
+  std::vector<int> default_ordering;
+  std::vector<int> loop_ordering;
+  for(int i = 0; i < num_loops; i++) {
+    int order = static_cast<HMInputParam<int>*>(InputParams[i + 2])->getVal();
+    loop_ordering.push_back(order);
+    default_ordering.push_back(i);
+  }
 
   //Initialize tensors
   int NUM_I = 10000;
@@ -624,21 +665,29 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   int NUM_K = 1000;
 
   if(!initialized) {
-    sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
-    sddmm_handler->initialize_data();
+    // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
+    sddmm_handler = new SDDMM();
+    sddmm_handler->initialize_data(1);
     initialized = true;
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
-  sddmm_handler->generate_schedule(chunk_size, unroll_factor, order);
+  // sddmm_handler->generate_schedule(chunk_size, unroll_factor, order);
+  sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
-  bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
-  sddmm_handler->compute(default_config);
+  // bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
+  bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
+  int num_reps = 10;
+  double total_time = 0.0;
+  for(int i = 0; i < num_reps; i++) {
+    sddmm_handler->compute(default_config);
+    total_time += spmm_handler->get_compute_time();
+  }
 
-  Obj.compute_time = sddmm_handler->get_compute_time();
+  double compute_time = total_time / num_reps;
 
   if(default_config) {
-    default_config_time = sddmm_handler->get_default_compute_time();
+    default_config_time = compute_time;
   }
   return Obj;
 }
@@ -729,7 +778,7 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 int main(int argc, char **argv) {
 
-    // setenv("HYPERMAPPER_HOME", "/home/rubensl/hypermapper_dev", true);
+    setenv("HYPERMAPPER_HOME", "/home/ubuntu/workspace/hypermapper_dev", true);
     printf("Setting HM variable\n");
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
