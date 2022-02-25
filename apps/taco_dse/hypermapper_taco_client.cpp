@@ -684,7 +684,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   double total_time = 0.0;
   for(int i = 0; i < num_reps; i++) {
     sddmm_handler->compute(default_config);
-    total_time += spmm_handler->get_compute_time();
+    total_time += sddmm_handler->get_compute_time();
   }
 
   double compute_time = total_time / num_reps;
