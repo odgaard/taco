@@ -174,7 +174,7 @@ public:
         //     return;
         // TODO: Remove
         // return;
-        reorderings = new LoopReordering(ordering);
+        reorderings = new LoopReordering<taco::IndexVar>(ordering);
         reorderings->compute_permutations();
     }
     std::pair<taco::Tensor<double>, taco::Tensor<double>> load_tensor(std::string tensorPath, int num_k = 1000) {

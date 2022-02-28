@@ -709,15 +709,13 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
       cout << l << " ";
     }
     cout << endl;
-    for (int chunkSize_idx = 0; chunkSize_idx < 11; chunkSize_idx++) {
-
+    for (int chunkSize_idx = 0; chunkSize_idx < 8; chunkSize_idx++) {
       int chunk_size = chunkSizeValues[chunkSize_idx];
       std::vector<int> default_ordering{0,1,2,3,4};
 
       spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
       bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-      int num_reps = 1;
       double total_time = 0.0;
       for(int i = 0; i < num_reps; i++) {
         spmm_handler->compute(default_config);
@@ -741,6 +739,74 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
 
 }
+void SpMMVarianceTest(std::ofstream &logger) {
+   using namespace taco;
+
+  int NUM_I = 67173;
+  int NUM_J = 67173;
+  int NUM_K = 1000;
+  float _sparsity = .982356;
+
+  int num_reps = 500;
+
+
+  std::vector<std::vector<double>> obj_vals;
+  std::vector<double> chunk_sizes{16, 8, 4, 32, 64, 512, 1024};
+  std::vector<double> unroll_factors{8, 4, 1, 2, 32, 4, 512};
+  std::vector<std::vector<int>> permutations{{0,1,2,3,4},
+                                             {1,4,2,3,0},
+                                             {4,3,2,1,0},
+                                             {2,3,1,4,0},
+                                             {4,2,3,1,0},
+                                             {3,0,2,4,1},
+                                             {0,1,4,2,3}};
+
+
+  if(!initialized) {
+    // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
+    spmm_handler = new SpMM();
+    // spmm_handler->initialize_data(0);
+    spmm_handler->initialize_data(1);
+    initialized = true;
+    sparsity = spmm_handler->get_sparsity();
+    num_j = spmm_handler->get_num_j();
+    op = "SpMM";
+
+    // Taco requires you to start with running the deafult
+    obj_vals.push_back(vector<double>());
+    spmm_handler->generate_schedule(chunk_sizes[0], unroll_factors[0], permutations[0]);
+
+    for(int i = 0; i < num_reps; i++) {
+      spmm_handler->compute(true);
+      obj_vals[0].push_back(spmm_handler->get_compute_time());
+    }
+  }
+
+  for (int i = 1; i < 7; i++) {
+    obj_vals.push_back(vector<double>());
+    spmm_handler->generate_schedule(chunk_sizes[i], unroll_factors[i], permutations[i]);
+    for(int j = 0; j < num_reps; j++) {
+      spmm_handler->compute(false);
+      obj_vals[i].push_back(spmm_handler->get_compute_time());
+    }
+  }
+
+  for (int i = 0; i < 7; i++) {
+    cout << chunk_sizes[i] << " " << unroll_factors[i] << " ";
+    for (int j = 0; j < 5; j++) {
+      cout << permutations[i][j] << " ";
+    }
+    cout << endl;
+  }
+  cout << endl;
+  for (int i = 0; i < 7; i++) {
+    for(int j = 0; j < num_reps; j++) {
+      cout << obj_vals[i][j] << " ";
+    }
+    cout << endl;
+  }
+}
+
 
 int main(int argc, char **argv) {
 
@@ -791,6 +857,10 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  if (false) {
+    SpMMVarianceTest(logger);
+    exit(1);
+  }
   // Set these values accordingly
   std::string OutputFoldername = "outdata";
   std::string AppName = "cpp_taco_" + test_name;

@@ -62,7 +62,7 @@ private:
   std::string Name;
   std::string const Key;
   ParamType Type;
-  inline static int count = 0;
+  int count = 0;
   DataType DType;
 
 public:
