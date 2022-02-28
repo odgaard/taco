@@ -129,9 +129,7 @@ struct UfuncInputCache {
     this->num_i = this->inputTensor.getDimensions()[0];
     this->num_j = this->inputTensor.getDimensions()[1];
 
-    cout << "other tensor " << num_k << endl;
     this->otherTensor = get_tensor(num_k);
-    cout << "other tensor " << this->otherTensor.getDimensions()[0] << " " << this->otherTensor.getDimensions()[1] << endl;
     if (countNNZ) {
       this->nnz = 0;
       for (auto& it : taco::iterate<double>(this->inputTensor)) {
@@ -404,7 +402,6 @@ public:
             ssTensors mtxTensors;
             if (matrix_name == "auto") {
                 std::tie(B, C) = load_tensor(mtxTensors.tensors[0], NUM_K);
-                std::cout << mtxTensors.tensors[0] << std::endl;
             } else {
                 auto ssPath = std::getenv("SUITESPARSE_PATH");
                 string ssPathStr = std::string(ssPath);
@@ -415,11 +412,7 @@ public:
                 } else {
                     matrix_path = ssPathStr + "/" + matrix_name;
                 }
-                cout << NUM_K << endl;
                 std::tie(B, C) = load_tensor(matrix_path, NUM_K);
-                std::cout << matrix_name << " " << NUM_K << endl;
-                std::cout << B.getDimensions()[0] << " " << B.getDimensions()[1] << endl;
-                std::cout << C.getDimensions()[0] << " " << C.getDimensions()[1] << endl;
             }
             NUM_I = B.getDimensions()[0];
             NUM_J = B.getDimensions()[1];
@@ -451,7 +444,6 @@ public:
                 }
             }
         }
-        cout << NUM_I << " " << NUM_K << endl;
         taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
         A = result;
 
@@ -596,9 +588,6 @@ public:
         else {
             for (int i = 0; i < NUM_I; i++)
             {
-                if (i % 1000) {
-                  cout << i << endl;
-                }
                 for (int j = 0; j < NUM_J; j++)
                 {
                     float rand_float = (float)rand() / (float)(RAND_MAX);
@@ -713,6 +702,7 @@ public:
         {
             default_compute_time = timer.getResult().mean;
         }
+        timer.clear_cache();
     }
 
 };
