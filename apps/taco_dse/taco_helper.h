@@ -572,7 +572,7 @@ public:
 
         srand(268238);
         if(matrix_name != "random") {
-            NUM_K = 10000;
+            NUM_K = 1000;
             ssTensors mtxTensors;
             if (matrix_name == "auto") {
                 B = inputCache.getMat(mtxTensors.tensors[0], taco::CSR, true, NUM_K);
@@ -592,8 +592,6 @@ public:
             }
             NUM_I = B.getDimension(0);
             NUM_J = B.getDimension(1);
-            cout << "finished getting mtx " << endl;
-            cout << "NUM_I " << NUM_I << " NUM_J " << NUM_J << endl;
         }
         else {
             for (int i = 0; i < NUM_I; i++)
@@ -635,25 +633,15 @@ public:
         }
         D = D_tmp;
 
-        cout << "through loops" << endl;
-
         B.pack();
         C.pack();
         D.pack();
 
-        cout << "through packing" << endl;
-        cout << A.getDimensions()[0] << " " << A.getDimensions()[1] << endl;
-        cout << B.getDimensions()[0] << " " << B.getDimensions()[1] << endl;
-        cout << C.getDimensions()[0] << " " << C.getDimensions()[1] << endl;
-        cout << D.getDimensions()[0] << " " << D.getDimensions()[1] << endl;
-
         A(i,j) = B(i,j) * C(i,k) * D(k,j);
-        cout << "a" << endl;
         // Avoid duplicate reinitialize
         initialized = true;
         std::vector<taco::IndexVar> reorder_{i0, i1, kpos0, j, kpos1};
         compute_reordering(reorder_);
-        cout << "data initialised" << endl;
     }
     float get_sparsity() { return (matrix_name == "random") ? SPARSITY : inputCache.get_sparsity(); }
     int get_num_j() { return NUM_J; }

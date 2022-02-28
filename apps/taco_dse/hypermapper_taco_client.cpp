@@ -46,6 +46,7 @@ int num_loops = 0;
 float sparsity = 0.0f;
 int num_j = 0;
 std::string op;
+int num_reps;
 
 struct popen2 {
   pid_t child_pid;
@@ -55,7 +56,7 @@ struct popen2 {
 int popen2(const char *cmdline, struct popen2 *childinfo);
 std::string createjson(std::string AppName, std::string OutputFoldername, int NumIterations,
                   int NumDSERandomSamples, std::vector<HMInputParamBase *> &InParams,
-                  std::vector<std::string> Objectives, std::string taco_op, std::string optimization, std::string count);
+                  std::vector<std::string> Objectives, std::string optimization, std::string count);
 void fatalError(const std::string &msg);
 int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT);
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams);
@@ -125,28 +126,29 @@ void fatalError(const std::string &msg) {
 // - Objectives: std::string with objective names
 std::string createjson(std::string AppName, std::string OutputFoldername, int NumIterations,
                   int NumDSERandomSamples, std::vector<HMInputParamBase *> &InParams,
-                  std::vector<std::string> Objectives, std::string taco_op, std::string optimization, std::string count="0") {
+                  std::vector<std::string> Objectives, std::string optimization, std::string count="0") {
 
   std::string CurrentDir = fs::current_path();
   std::string OutputDir = CurrentDir + "/" + OutputFoldername + "/";
   if (fs::exists(OutputDir)) {
     std::cerr << "Output directory exists, continuing!" << std::endl;
   } else {
-
     std::cerr << "Output directory does not exist, creating!" << std::endl;
     if (!fs::create_directory(OutputDir)) {
       fatalError("Unable to create Directory: " + OutputDir);
     }
   }
   json HMScenario;
-  HMScenario["application_name"] = AppName;
+  std::ifstream json_template(AppName + ".json", std::ifstream::binary);
+  if (!json_template) {
+    cout << "Failed to open json file " + AppName + ".json" << endl;
+    exit(1);
+  }
+  json_template >> HMScenario;
+
   HMScenario["optimization_objectives"] = json(Objectives);
-  HMScenario["print_best"] = "auto";
-  HMScenario["scalarization_method"] = "linear";
-  // HMScenario["noise"] = false;
-  HMScenario["hypermapper_mode"]["mode"] = "client-server";
   HMScenario["run_directory"] = CurrentDir;
-  HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + "_" + taco_op + ".log";
+  HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + ".log";
   if(optimization != "random_sampling") {
     HMScenario["optimization_method"] = optimization;
     HMScenario["optimization_iterations"] = NumIterations;
@@ -155,109 +157,17 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
     HMScenario["optimization_iterations"] = 0;
   }
 
-  HMScenario["lengthscale_prior"]["name"] = "gamma";
-  HMScenario["lengthscale_prior"]["parameters"] = vector<float>{1, 0.003};
-  HMScenario["outputscale_prior"]["name"] = "gamma";
-  HMScenario["outputscale_prior"]["parameters"] = vector<float>{2, 0.15};
-  HMScenario["noise_prior"]["name"] = "gamma";
-  HMScenario["noise_prior"]["parameters"] = vector<float>{1.1, 0.05};
-
-  // HMScenario["optimization_method"] = "local_search";
-  // HMScenario["models"]["model"] = "random_forest";
-  HMScenario["models"]["model"] = "gaussian_process";
-
   HMScenario["output_data_file"] =
-      OutputFoldername + "/" + AppName + "_" + taco_op + "_" + optimization + count + "_output_data.csv";
+      OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
   HMScenario["output_pareto_file"] =
-      OutputFoldername + "/" + AppName + "_" + taco_op + "_output_pareto.csv";
+      OutputFoldername + "/" + AppName + "_output_pareto.csv";
   HMScenario["output_image"]["output_image_pdf_file"] =
-      OutputFoldername + "_" + AppName + "_" + taco_op + "_output_image.pdf";
+      OutputFoldername + "_" + AppName + "_output_image.pdf";
 
-  json HMDOE;
-  HMDOE["doe_type"] = "random sampling";
-  HMDOE["number_of_samples"] = NumDSERandomSamples;
-  if(optimization == "random_sampling") {
-    HMDOE["number_of_samples"] = NumDSERandomSamples + NumIterations;
-  }
-
-  HMScenario["design_of_experiment"] = HMDOE;
-
-  for (auto InParam : InParams) {
-    json HMParam;
-    HMParam["parameter_type"] = getTypeAsString(InParam->getType());
-    switch (InParam->getDType()) {
-      case Int:
-        HMParam["values"] = json(static_cast<HMInputParam<int>*>(InParam)->getRange());
-        if(InParam->getName() == "chunk_size2") {
-          std::vector<std::string> constraint;
-          constraint.push_back("chunk_size % chunk_size2 == 0");
-          HMParam["constraints"] = json(constraint);
-          std::vector<std::string> dependency;
-          dependency.push_back("chunk_size");
-          HMParam["dependencies"] = json(dependency);
-        }
-        else if(InParam->getName() == "chunk_size") {
-          std::vector<std::string> constraint;
-          constraint.push_back("chunk_size % 2 == 0");
-          HMParam["constraints"] = json(constraint);
-          HMParam["transform"] = "log";
-          // HMParam["parameter_default"] = 16;
-        }
-        else if(InParam->getName() == "unroll_factor") {
-          std::vector<std::string> constraint;
-          constraint.push_back("unroll_factor < chunk_size");
-          constraint.push_back("unroll_factor % 2 == 0");
-          HMParam["constraints"] = json(constraint);
-          std::vector<std::string> dependency;
-          dependency.push_back("chunk_size");
-          HMParam["dependencies"] = json(dependency);
-          HMParam["transform"] = "log";
-          // HMParam["parameter_default"] = 8;
-        }
-        else if(InParam->getName() == "split") {
-          // HMParam["parameter_default"] = 0;
-        }
-        else if(InParam->getName().find("loop") != std::string::npos) {
-            std::string param = InParam->getName();
-            std::vector<std::string> constraint;
-            std::vector<std::string> dependency;
-            int last_idx = std::stoi(std::string(1, InParam->getName().back()));
-            if(last_idx != 0) {
-                int current_idx = std::stoi(std::string(1, param.back()));
-                std::vector<int> consts;
-                for(int i = current_idx - 1; i >= 0; i--) {
-                  consts.push_back(i);
-                }
-                for(auto idx : consts) {
-                  constraint.push_back(param + " != loop" + std::to_string(idx));
-                  dependency.push_back("loop" + std::to_string(idx));
-                }
-              HMParam["constraints"] = json(constraint);
-              HMParam["dependencies"] = json(dependency);
-            }
-            else {
-              // constraint.push_back(param + " > -1");
-              // HMParam["constraints"] = json(constraint);
-            }
-            HMParam["parameter_default"] = last_idx;
-        }
-        break;
-      case Float:
-        HMParam["values"] = json(static_cast<HMInputParam<float>*>(InParam)->getRange());
-        break;
-      case IntVector:
-        HMParam["values"] = json(static_cast<HMInputParam<std::vector<int>>*>(InParam)->getRange()[0]);
-        HMParam["parametrization"] = "spearman"; // "kendall", "hamming"
-        break;
-    }
-    HMScenario["input_parameters"][InParam->getKey()] = HMParam;
-  }
-
-  //  std::cout << setw(4) << HMScenario << std::endl;
   ofstream HyperMapperScenarioFile;
 
   std::string JSonFileNameStr =
-      CurrentDir + "/" + OutputFoldername + "/" + AppName + "_" + taco_op + "_" + optimization + "_scenario.json";
+      CurrentDir + "/" + OutputFoldername + "/" + AppName + "_" + optimization + "_scenario.json";
 
   HyperMapperScenarioFile.open(JSonFileNameStr);
   if (HyperMapperScenarioFile.fail()) {
@@ -315,8 +225,6 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  // std::vector<int> chunkSizeRange{1, 1024};
-  // std::vector<int> unrollFactorRange{1, 1024};
   std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 
@@ -592,8 +500,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int NUM_J = 67173;
   int NUM_K = 1000;
   float _sparsity = .982356;
-
-  int num_reps = 10;
+  std::vector<double> compute_times;
 
   if(!initialized) {
     cout << "INITIALIZING" << endl;
@@ -610,30 +517,22 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     int tmp_chunk_size = 16;
     int tmp_unroll_factor = 8;
     spmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
-    double total_time = 0.0;
+    compute_times = vector<double>();
     for(int i = 0; i < num_reps; i++) {
       spmm_handler->compute(true);
-      total_time += spmm_handler->get_compute_time();
+      compute_times.push_back(spmm_handler->get_compute_time());
     }
-    default_config_time = total_time / num_reps;
+    default_config_time = median(compute_times);
   }
 
   spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
-
-  bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  double total_time = 0.0;
-  std::vector<double> compute_times;
+  compute_times = vector<double>();
   for(int i = 0; i < num_reps; i++) {
-    spmm_handler->compute(default_config);
-    total_time = spmm_handler->get_compute_time();
-    compute_times.push_back(total_time);
+    spmm_handler->compute(false);
+    compute_times.push_back(spmm_handler->get_compute_time());
   }
 
-  // double compute_time = total_time / num_reps;
-  double compute_time = median(compute_times);
-
-  Obj.compute_time = compute_time;
-
+  Obj.compute_time = median(compute_times);
   return Obj;
 }
 
@@ -651,15 +550,14 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   int NUM_J = 10000;
   int NUM_K = 1000;
   int num_reps = 10;
+  std::vector<double> compute_times;
 
   if(!initialized) {
     cout << "INITIALIZING" << endl;
     // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
-    cout << "a" << endl;
     sddmm_handler->initialize_data(1);
-    cout << "a" << endl;
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
     num_j = sddmm_handler->get_num_j();
@@ -670,37 +568,25 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     int tmp_chunk_size = 16;
     int tmp_unroll_factor = 8;
     sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
-    double total_time = 0.0;
-    cout << "b" << endl;
+    compute_times = vector<double>();
     for(int i = 0; i < num_reps; i++) {
       sddmm_handler->compute(true);
-      cout << "c" << endl;
-      total_time += sddmm_handler->get_compute_time();
+      compute_times.push_back(sddmm_handler->get_compute_time());
     }
-    default_config_time = total_time / num_reps;
-    cout << "d" << endl;
+    default_config_time = median(compute_times);
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
-  // sddmm_handler->generate_schedule(chunk_size, unroll_factor, order);
-  cout << "gen" << endl;
   sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
   // bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
-  bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  double total_time = 0.0;
+  compute_times = vector<double>();
   for(int i = 0; i < num_reps; i++) {
-    cout << "compute" << endl;
-    sddmm_handler->compute(default_config);
-    cout << "time " << sddmm_handler->get_compute_time() << endl;
-    total_time += sddmm_handler->get_compute_time();
+    sddmm_handler->compute(false);
+    compute_times.push_back(sddmm_handler->get_compute_time());
   }
 
-  double compute_time = total_time / num_reps;
-  Obj.compute_time = compute_time;
-  if(default_config) {
-    default_config_time = compute_time;
-  }
+  Obj.compute_time = median(compute_times);
   return Obj;
 }
 
@@ -817,7 +703,6 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   std::vector<int> loop_ordering{0, 1, 2, 3, 4};
   int unroll_factor = 8;
 
-  cout << "START" << endl;
   int permutation_idx = 0;
   do {
     for (int l : loop_ordering) {
@@ -883,11 +768,10 @@ int main(int argc, char **argv) {
   std::string count = argv[3];
   std::string log_file = "hypermapper_taco_log.csv";
 
-  int n_repetitions;
   if (argv[4] == nullptr)
-    n_repetitions = 1;
+    num_reps = 10;
   else
-    n_repetitions = std::stoi(argv[4]);
+    num_reps = std::stoi(argv[4]);
 
   if (argv[5] == nullptr)
     matrix_name = "auto";
@@ -909,7 +793,7 @@ int main(int argc, char **argv) {
 
   // Set these values accordingly
   std::string OutputFoldername = "outdata";
-  std::string AppName = "cpp_taco";
+  std::string AppName = "cpp_taco_" + test_name;
   int dimensionality_plus_one = 10;
   int NumSamples = dimensionality_plus_one;
   int NumIterations = 50;
@@ -945,7 +829,7 @@ int main(int argc, char **argv) {
   // Create json scenario
   JSonFileNameStr =
       createjson(AppName, OutputFoldername, NumIterations,
-                 NumSamples, InParams, Objectives, test_name, optimization, count);
+                 NumSamples, InParams, Objectives, optimization, count);
 
   // Launch HyperMapper
   std::string cmd("python3 ");
