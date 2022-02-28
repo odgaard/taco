@@ -67,14 +67,14 @@ void deleteInputParams(std::vector<HMInputParamBase *> &InParams);
 auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key);
 void setInputValue(HMInputParamBase *Param, std::string ParamVal);
 taco::IndexStmt scheduleTTMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE, int UNROLL_FACTOR, int order);
-HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger);
-HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::ofstream &logger);
-
+HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger);
+void spMMExhaustiveSearch();
 
 // popen2 implementation adapted from:
 // https://github.com/vi/syscall_limiter/blob/master/writelimiter/popen2.c
@@ -142,16 +142,25 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   HMScenario["application_name"] = AppName;
   HMScenario["optimization_objectives"] = json(Objectives);
   HMScenario["print_best"] = "auto";
+  HMScenario["scalarization_method"] = "linear";
+  // HMScenario["noise"] = false;
   HMScenario["hypermapper_mode"]["mode"] = "client-server";
   HMScenario["run_directory"] = CurrentDir;
   HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + "_" + taco_op + ".log";
-  if(optimization != "random_sampling") { 
+  if(optimization != "random_sampling") {
     HMScenario["optimization_method"] = optimization;
     HMScenario["optimization_iterations"] = NumIterations;
   }
   else {
     HMScenario["optimization_iterations"] = 0;
   }
+
+  HMScenario["lengthscale_prior"]["name"] = "gamma";
+  HMScenario["lengthscale_prior"]["parameters"] = vector<float>{1, 0.003};
+  HMScenario["outputscale_prior"]["name"] = "gamma";
+  HMScenario["outputscale_prior"]["parameters"] = vector<float>{2, 0.15};
+  HMScenario["noise_prior"]["name"] = "gamma";
+  HMScenario["noise_prior"]["parameters"] = vector<float>{1.1, 0.05};
 
   // HMScenario["optimization_method"] = "local_search";
   // HMScenario["models"]["model"] = "random_forest";
@@ -189,19 +198,12 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
         }
         else if(InParam->getName() == "chunk_size") {
           std::vector<std::string> constraint;
-          // constraint.push_back("(chunk_size & (chunk_size - 1)) == 0");
           constraint.push_back("chunk_size % 2 == 0");
           HMParam["constraints"] = json(constraint);
-          // std::vector<std::string> dependency;
-          // dependency.push_back("chunk_size");
-          // HMParam["dependencies"] = json(dependency);
-          HMParam["parameter_default"] = 16;
-        }
-        else if(InParam->getName() == "reordering") {
-          HMParam["parameter_default"] = 0;
+          HMParam["transform"] = "log";
+          // HMParam["parameter_default"] = 16;
         }
         else if(InParam->getName() == "unroll_factor") {
-          HMParam["parameter_default"] = 8;
           std::vector<std::string> constraint;
           constraint.push_back("unroll_factor < chunk_size");
           constraint.push_back("unroll_factor % 2 == 0");
@@ -209,9 +211,11 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
           std::vector<std::string> dependency;
           dependency.push_back("chunk_size");
           HMParam["dependencies"] = json(dependency);
+          HMParam["transform"] = "log";
+          // HMParam["parameter_default"] = 8;
         }
         else if(InParam->getName() == "split") {
-          HMParam["parameter_default"] = 0;
+          // HMParam["parameter_default"] = 0;
         }
         else if(InParam->getName().find("loop") != std::string::npos) {
             std::string param = InParam->getName();
@@ -219,12 +223,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
             std::vector<std::string> dependency;
             int last_idx = std::stoi(std::string(1, InParam->getName().back()));
             if(last_idx != 0) {
-              // int i = 0;
-              // for(int i = 0; i < num_loops; i++) {
                 int current_idx = std::stoi(std::string(1, param.back()));
-                // int i = current_idx - 1;
                 std::vector<int> consts;
-                // consts.push_back(i);
                 for(int i = current_idx - 1; i >= 0; i--) {
                   consts.push_back(i);
                 }
@@ -232,9 +232,6 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
                   constraint.push_back(param + " != loop" + std::to_string(idx));
                   dependency.push_back("loop" + std::to_string(idx));
                 }
-                // if(std::stoi(std::string(1, param.back())) != i) {
-                // }
-              // }
               HMParam["constraints"] = json(constraint);
               HMParam["dependencies"] = json(dependency);
             }
@@ -247,6 +244,10 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
         break;
       case Float:
         HMParam["values"] = json(static_cast<HMInputParam<float>*>(InParam)->getRange());
+        break;
+      case IntVector:
+        HMParam["values"] = json(static_cast<HMInputParam<std::vector<int>>*>(InParam)->getRange()[0]);
+        HMParam["parametrization"] = "spearman"; // "kendall", "hamming"
         break;
     }
     HMScenario["input_parameters"][InParam->getKey()] = HMParam;
@@ -330,21 +331,11 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   numParams++;
 
   int reorder_size = 5;
-  // int num_reorderings = factorial(reorder_size) - 1;
-  // std::vector<int> reorderRange{0, num_reorderings};
-  // HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
-  // reorderParam->setRange(reorderRange);
-  // InParams.push_back(reorderParam);
-  // numParams++;
-
-  std::vector<int> reorderRange{0, reorder_size - 1};
-  for(int i = 0; i < reorder_size; i++) {
-    HMInputParam<int> *reorderParam = new HMInputParam<int>("loop" + std::to_string(i), ParamType::Integer);
-    reorderParam->setRange(reorderRange);
-    InParams.push_back(reorderParam);
-    numParams++;
-  }
-
+  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
+  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
+  loopOrderingParam->setRange(valuesRange);
+  InParams.push_back(loopOrderingParam);
+  numParams++;
   num_loops = reorder_size;
 
   return numParams;
@@ -354,38 +345,27 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
 int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeRange{2, 512};
-  std::vector<int> unrollFactorRange{2, 256};
+  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512};
+  std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
 
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Integer);
-  chunkSizeParam->setRange(chunkSizeRange);
+
+  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
+  chunkSizeParam->setRange(chunkSizeValues);
   InParams.push_back(chunkSizeParam);
   numParams++;
 
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Integer);
-  unrollFactorParam->setRange(unrollFactorRange);
+  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
+  unrollFactorParam->setRange(unrollFactorValues);
   InParams.push_back(unrollFactorParam);
   numParams++;
 
   int reorder_size = 5;
-
-  std::vector<int> reorderRange{0, reorder_size - 1};
-  for(int i = 0; i < reorder_size; i++) {
-    HMInputParam<int> *reorderParam = new HMInputParam<int>("loop" + std::to_string(i), ParamType::Integer);
-    reorderParam->setRange(reorderRange);
-    InParams.push_back(reorderParam);
-    numParams++;
-  }
-
+  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
+  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
+  loopOrderingParam->setRange(valuesRange);
+  InParams.push_back(loopOrderingParam);
+  numParams++;
   num_loops = reorder_size;
-
-  // int reorder_size = 5;
-  // int num_reorderings = factorial(reorder_size) - 1;
-  // std::vector<int> reorderRange{0, num_reorderings};
-  // HMInputParam<int> *reorderParam = new HMInputParam<int>("reordering", ParamType::Integer);
-  // reorderParam->setRange(reorderRange);
-  // InParams.push_back(reorderParam);
-  // numParams++;
 
   return numParams;
 }
@@ -463,12 +443,14 @@ void deleteInputParams(std::vector<HMInputParamBase *> &InParams) {
       case Float:
         delete static_cast<HMInputParam<float>*>(p);
         break;
+      case IntVector:
+        delete static_cast<HMInputParam<std::vector<int>>*>(p);
+        break;
       default:
         fatalError("Trying to free unhandled data type.");
     }
   }
 }
-
 
 // Function for mapping input parameter based on key
 auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key) {
@@ -485,17 +467,29 @@ auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key
 void setInputValue(HMInputParamBase *Param, std::string ParamVal) {
   switch(Param->getDType()) {
     case Int:
-      static_cast<HMInputParam<int>*>(Param)->setVal(stoi(ParamVal));
+      static_cast<HMInputParam<int>*>(Param)->setVal(std::stoi(ParamVal));
       break;
     case Float:
       static_cast<HMInputParam<float>*>(Param)->setVal(stof(ParamVal));
       break;
+    case IntVector:
+      // param val comes as a string such as: (2,1,4,3,0)
+      // remove parenthesis, then transform to vector<int>
+      ParamVal.pop_back();
+      ParamVal.erase(ParamVal.begin());
+      vector<int> convertedVector;
+      string token;
+      istringstream tokenStream(ParamVal);
+      while (getline(tokenStream, token, ',')) {
+        convertedVector.push_back(std::stoi(token));
+      }
+      static_cast<HMInputParam<std::vector<int>>*>(Param)->setVal(convertedVector);
+      break;
   }
 }
 
-
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -515,6 +509,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   if(!initialized) {
     // spmv_handler = new SpMV(NUM_I, NUM_J);
     spmv_handler = new SpMV();
+    spmv_handler->matrix_name = matrix_name;
     spmv_handler->initialize_data(1);
     initialized = true;
   }
@@ -533,7 +528,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -549,7 +544,8 @@ HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputP
   //Initialize tensors
   if(!initialized) {
     spmv_sparse_handler = new SpMV(NUM_I, NUM_J);
-    spmv_sparse_handler->initialize_data();
+    spmv_sparse_handler->matrix_name = matrix_name;
+    spmv_sparse_handler->initialize_data(1);
     initialized = true;
   }
 
@@ -584,46 +580,47 @@ double median(vector<double> vec)
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  // int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-
-  std::vector<int> default_ordering;
-  std::vector<int> loop_ordering;
-  for(int i = 0; i < num_loops; i++) {
-    // std::cout << "in here\n";
-    int order = static_cast<HMInputParam<int>*>(InputParams[i + 2])->getVal();
-    loop_ordering.push_back(order);
-    default_ordering.push_back(i);
-  }
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[2])->getVal();
+  std::vector<int> default_ordering{0,1,2,3,4};
 
   int NUM_I = 67173;
   int NUM_J = 67173;
   int NUM_K = 1000;
   float _sparsity = .982356;
 
+  int num_reps = 10;
+
   if(!initialized) {
-    // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
-    // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
+    cout << "INITIALIZING" << endl;
     spmm_handler = new SpMM();
-    // spmm_handler->initialize_data();
+    spmm_handler->matrix_name = matrix_name;
     spmm_handler->initialize_data(1);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
     num_j = spmm_handler->get_num_j();
     op = "SpMM";
+
+    // Taco requires you to start with running the deafult
+    std::vector<int> tmp_loop_ordering = default_ordering;
+    int tmp_chunk_size = 16;
+    int tmp_unroll_factor = 8;
+    spmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+    double total_time = 0.0;
+    for(int i = 0; i < num_reps; i++) {
+      spmm_handler->compute(true);
+      total_time += spmm_handler->get_compute_time();
+    }
+    default_config_time = total_time / num_reps;
   }
 
-
-  //Initiate scheduling passing in chunk_size (param to optimize)
-  // spmm_handler->generate_schedule(chunk_size, unroll_factor, order);
   spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
   bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  int num_reps = 10;
   double total_time = 0.0;
   std::vector<double> compute_times;
   for(int i = 0; i < num_reps; i++) {
@@ -637,58 +634,70 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
 
   Obj.compute_time = compute_time;
 
-  if(default_config) {
-    default_config_time = compute_time;
-  }
   return Obj;
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  // int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-
-  std::vector<int> default_ordering;
-  std::vector<int> loop_ordering;
-  for(int i = 0; i < num_loops; i++) {
-    int order = static_cast<HMInputParam<int>*>(InputParams[i + 2])->getVal();
-    loop_ordering.push_back(order);
-    default_ordering.push_back(i);
-  }
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[2])->getVal();
+  std::vector<int> default_ordering{0,1,2,3,4};
 
   //Initialize tensors
   int NUM_I = 10000;
   int NUM_J = 10000;
   int NUM_K = 1000;
+  int num_reps = 10;
 
   if(!initialized) {
+    cout << "INITIALIZING" << endl;
     // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
     sddmm_handler = new SDDMM();
+    sddmm_handler->matrix_name = matrix_name;
+    cout << "a" << endl;
     sddmm_handler->initialize_data(1);
+    cout << "a" << endl;
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
     num_j = sddmm_handler->get_num_j();
     op = "SDDMM";
+
+    // Taco requires you to start with running the deafult
+    std::vector<int> tmp_loop_ordering = default_ordering;
+    int tmp_chunk_size = 16;
+    int tmp_unroll_factor = 8;
+    sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+    double total_time = 0.0;
+    cout << "b" << endl;
+    for(int i = 0; i < num_reps; i++) {
+      sddmm_handler->compute(true);
+      cout << "c" << endl;
+      total_time += sddmm_handler->get_compute_time();
+    }
+    default_config_time = total_time / num_reps;
+    cout << "d" << endl;
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
   // sddmm_handler->generate_schedule(chunk_size, unroll_factor, order);
+  cout << "gen" << endl;
   sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
   // bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
   bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  int num_reps = 10;
   double total_time = 0.0;
   for(int i = 0; i < num_reps; i++) {
+    cout << "compute" << endl;
     sddmm_handler->compute(default_config);
+    cout << "time " << sddmm_handler->get_compute_time() << endl;
     total_time += sddmm_handler->get_compute_time();
   }
 
   double compute_time = total_time / num_reps;
-
+  Obj.compute_time = compute_time;
   if(default_config) {
     default_config_time = compute_time;
   }
@@ -696,7 +705,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -728,7 +737,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::ofstream &logger) {
+HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -760,42 +769,111 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
   return Obj;
 }
 
-HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::ofstream &logger) {
+HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger) {
   if (test_name == "SpMV")
-    return calculateObjectiveSpMVDense(InParams, logger);
+    return calculateObjectiveSpMVDense(InParams, matrix_name, logger);
   if (test_name == "SpMVSparse")
-    return calculateObjectiveSpMVSparse(InParams, logger);
+    return calculateObjectiveSpMVSparse(InParams, matrix_name, logger);
   if (test_name == "SpMM")
-    return calculateObjectiveSpMMDense(InParams, logger);
+    return calculateObjectiveSpMMDense(InParams, matrix_name, logger);
   if (test_name == "SDDMM")
-    return calculateObjectiveSDDMMDense(InParams, logger);
+    return calculateObjectiveSDDMMDense(InParams, matrix_name, logger);
   if (test_name == "TTV")
-    return calculateObjectiveTTVDense(InParams, logger);
+    return calculateObjectiveTTVDense(InParams, matrix_name, logger);
   if (test_name == "TTM")
-    return calculateObjectiveTTMDense(InParams, logger);
+    return calculateObjectiveTTMDense(InParams, matrix_name, logger);
   else {
     std::cout << "Test case not implemented yet" << std::endl;
     exit(-1);
   }
 }
 
+void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
+
+  std::vector<vector<double>> obj_values(120, vector<double>(11));
+  using namespace taco;
+
+  int NUM_I = 67173;
+  int NUM_J = 67173;
+  int NUM_K = 1000;
+  float _sparsity = .982356;
+
+  if(!initialized) {
+    // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
+    // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
+    spmm_handler = new SpMM();
+    spmm_handler->matrix_name = matrix_name;
+    // spmm_handler->initialize_data(0);
+    spmm_handler->initialize_data(1);
+    initialized = true;
+    sparsity = spmm_handler->get_sparsity();
+    num_j = spmm_handler->get_num_j();
+    op = "SpMM";
+  }
+
+  std::string test_name = "SpMM";
+  std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> loop_ordering{0, 1, 2, 3, 4};
+  int unroll_factor = 8;
+
+  cout << "START" << endl;
+  int permutation_idx = 0;
+  do {
+    for (int l : loop_ordering) {
+      cout << l << " ";
+    }
+    cout << endl;
+    for (int chunkSize_idx = 0; chunkSize_idx < 11; chunkSize_idx++) {
+
+      int chunk_size = chunkSizeValues[chunkSize_idx];
+      std::vector<int> default_ordering{0,1,2,3,4};
+
+      spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+
+      bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
+      int num_reps = 1;
+      double total_time = 0.0;
+      for(int i = 0; i < num_reps; i++) {
+        spmm_handler->compute(default_config);
+        total_time += spmm_handler->get_compute_time();
+      }
+
+      double compute_time = total_time / num_reps;
+      obj_values[permutation_idx][chunkSize_idx] = compute_time;
+    }
+    permutation_idx ++;
+  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+
+  std::vector<int> loop_ordering2{0, 1, 2, 3, 4};
+  permutation_idx = 0;
+  do {
+    for (int chunkSize_idx = 0; chunkSize_idx < 11; chunkSize_idx++) {
+      cout << obj_values[permutation_idx][chunkSize_idx] << " ";
+    }
+    cout << endl;
+    permutation_idx ++;
+  } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
+
+}
+
 int main(int argc, char **argv) {
 
-    setenv("HYPERMAPPER_HOME", "/home/ubuntu/workspace/hypermapper_dev", true);
-    printf("Setting HM variable\n");
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
     ErrMsg += "Please set HYPERMAPPER_HOME before running this ";
+    setenv("HYPERMAPPER_HOME", "/home/ubuntu/workspace/hypermapper_dev", true);
+    printf("Setting HM variable\n");
     // fatalError(ErrMsg);
   }
 
-  srand(0);
+  // srand(0);
 
   // std::string test_name = "SpMM";
-  std::string test_name, optimization;
+  std::string test_name, optimization, matrix_name;
   if (argv[1] == nullptr)
     test_name = "SpMV";
-  else 
+  else
     test_name = argv[1];
   if (argv[2] == nullptr)
     optimization = "bayesian_optimization";
@@ -805,6 +883,17 @@ int main(int argc, char **argv) {
   std::string count = argv[3];
   std::string log_file = "hypermapper_taco_log.csv";
 
+  int n_repetitions;
+  if (argv[4] == nullptr)
+    n_repetitions = 1;
+  else
+    n_repetitions = std::stoi(argv[4]);
+
+  if (argv[5] == nullptr)
+    matrix_name = "auto";
+  else
+    matrix_name = argv[5];
+
   bool log_exists = fs::exists(log_file);
 
   std::ofstream logger(log_file, std::ios_base::app);
@@ -813,12 +902,17 @@ int main(int argc, char **argv) {
     logger << "Op,Size,Chunk size,Time" << std::endl;
   }
 
+  if (false) {
+    spMMExhaustiveSearch(matrix_name, logger);
+    exit(1);
+  }
+
   // Set these values accordingly
   std::string OutputFoldername = "outdata";
   std::string AppName = "cpp_taco";
-  int dimensionality_plus_one = 4;
+  int dimensionality_plus_one = 10;
   int NumSamples = dimensionality_plus_one;
-  int NumIterations = NumSamples * 30;
+  int NumIterations = 50;
   std::vector<std::string> Objectives = {"compute_time"};
 
   // Create output directory if it doesn't exist
@@ -842,11 +936,16 @@ int main(int argc, char **argv) {
     std::cout << "Param: " << *param << "\n";
   }
 
+    // exit(1);
+
+  const int max_buffer = 1000;
+  char buffer[max_buffer];
+  std::string JSonFileNameStr;
+
   // Create json scenario
-  std::string JSonFileNameStr =
+  JSonFileNameStr =
       createjson(AppName, OutputFoldername, NumIterations,
                  NumSamples, InParams, Objectives, test_name, optimization, count);
-  // exit(1);
 
   // Launch HyperMapper
   std::string cmd("python3 ");
@@ -860,9 +959,8 @@ int main(int argc, char **argv) {
 
   FILE *instream = fdopen(hypermapper.from_child, "r");
   FILE *outstream = fdopen(hypermapper.to_child, "w");
+  cout << "opened hypermapper" << endl;
 
-  const int max_buffer = 1000;
-  char buffer[max_buffer];
   // Loop that communicates with HyperMapper
   // Everything is done through function calls,
   // there should be no need to modify bellow this line.
@@ -882,7 +980,7 @@ int main(int argc, char **argv) {
       break;
     }
     std::string NumReqStr = bufferStr.substr(bufferStr.find(' ') + 1);
-    int numRequests = stoi(NumReqStr);
+    int numRequests = std::stoi(NumReqStr);
     // Receiving input param names
     fgets_res = fgets(buffer, max_buffer, instream);
     if (fgets_res == NULL) {
@@ -923,13 +1021,16 @@ int main(int argc, char **argv) {
       pos = 0;
       for (int param = 0; param < numParams; param++) {
         size_t len = bufferStr.find_first_of(",\n", pos) - pos;
+        if (bufferStr.at(pos) == '(') {
+          len = bufferStr.find_first_of(")\n", pos) - pos + 1;
+        }
         std::string ParamValStr = bufferStr.substr(pos, len);
         setInputValue(InputParamsMap[param], ParamValStr);
         response += ParamValStr;
         response += ",";
-        pos = bufferStr.find_first_of(",\n", pos) + 1;
+        pos = bufferStr.find_first_of(",\n", pos + len) + 1;
       }
-      HMObjective Obj = calculateObjective(InParams, test_name, logger);  // Function to run hypermapper on
+      HMObjective Obj = calculateObjective(InParams, test_name, matrix_name, logger);  // Function to run hypermapper on
       response += std::to_string(Obj.compute_time);
       response += "\n";
     }
@@ -938,12 +1039,13 @@ int main(int argc, char **argv) {
     fflush(outstream);
     i++;
   }
-
-  deleteInputParams(InParams);
+  cout << "closing pipes" << endl;
   close(hypermapper.from_child);
   close(hypermapper.to_child);
-
+  deleteInputParams(InParams);
   std::cout << "No sched: " << no_sched_time << std::endl;
+
+  cout << JSonFileNameStr << endl;
 
   FILE *fp;
   std::string cmdPareto("python3 ");
@@ -952,7 +1054,7 @@ int main(int argc, char **argv) {
   cmdPareto += " " + JSonFileNameStr;
   cmdPareto += " -i outdata -o " + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
-  cmdPareto += " -t " + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
+  cmdPareto += " -t '" + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
   cmdPareto += " -doe ";
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
