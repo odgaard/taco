@@ -676,62 +676,79 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
-  std::vector<vector<double>> obj_values(120, vector<double>(11));
+  std::vector<vector<double>> obj_values(120, vector<double>(7));
   using namespace taco;
 
   int NUM_I = 67173;
   int NUM_J = 67173;
   int NUM_K = 1000;
   float _sparsity = .982356;
+  std::vector<int> default_ordering{0,1,2,3,4};
+  std::vector<double> compute_times;
 
   if(!initialized) {
     // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
     // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
-    spmm_handler = new SpMM();
-    spmm_handler->matrix_name = matrix_name;
+    sddmm_handler = new SDDMM();
+    sddmm_handler->matrix_name = matrix_name;
     // spmm_handler->initialize_data(0);
-    spmm_handler->initialize_data(1);
+    sddmm_handler->initialize_data(1);
     initialized = true;
-    sparsity = spmm_handler->get_sparsity();
-    num_j = spmm_handler->get_num_j();
-    op = "SpMM";
+    sparsity = sddmm_handler->get_sparsity();
+    num_j = sddmm_handler->get_num_j();
+    op = "SDDMM";
+
+    // Taco requires you to start with running the deafult
+    std::vector<int> tmp_loop_ordering = default_ordering;
+    int tmp_chunk_size = 16;
+    int tmp_unroll_factor = 8;
+    sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+    compute_times = vector<double>();
+    for(int i = 0; i < num_reps; i++) {
+      sddmm_handler->compute(true);
+      compute_times.push_back(sddmm_handler->get_compute_time());
+    }
+    default_config_time = median(compute_times);
   }
 
-  std::string test_name = "SpMM";
-  std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512, 1024};
+  std::string test_name = "SDDMM";
+  std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512};
   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
   std::vector<int> loop_ordering{0, 1, 2, 3, 4};
   int unroll_factor = 8;
 
   int permutation_idx = 0;
-  do {
-    for (int l : loop_ordering) {
-      cout << l << " ";
-    }
-    cout << endl;
-    for (int chunkSize_idx = 0; chunkSize_idx < 8; chunkSize_idx++) {
-      int chunk_size = chunkSizeValues[chunkSize_idx];
-      std::vector<int> default_ordering{0,1,2,3,4};
+  for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
+    int chunk_size = chunkSizeValues[chunkSize_idx];
+    cout << chunk_size << endl;
 
-      spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+    permutation_idx = 0;
+    loop_ordering = vector<int>{0, 1, 2, 3, 4};
 
-      bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
+    do {
+      for (int l : loop_ordering) {
+        cout << l << " ";
+      }
+      cout << endl;
+      sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+
       double total_time = 0.0;
       for(int i = 0; i < num_reps; i++) {
-        spmm_handler->compute(default_config);
-        total_time += spmm_handler->get_compute_time();
+        sddmm_handler->compute(false);
+        total_time += sddmm_handler->get_compute_time();
       }
 
       double compute_time = total_time / num_reps;
       obj_values[permutation_idx][chunkSize_idx] = compute_time;
-    }
-    permutation_idx ++;
-  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+
+      permutation_idx ++;
+    } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+  }
 
   std::vector<int> loop_ordering2{0, 1, 2, 3, 4};
   permutation_idx = 0;
   do {
-    for (int chunkSize_idx = 0; chunkSize_idx < 11; chunkSize_idx++) {
+    for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
       cout << obj_values[permutation_idx][chunkSize_idx] << " ";
     }
     cout << endl;
@@ -852,7 +869,7 @@ int main(int argc, char **argv) {
     logger << "Op,Size,Chunk size,Time" << std::endl;
   }
 
-  if (false) {
+  if (true) {
     spMMExhaustiveSearch(matrix_name, logger);
     exit(1);
   }
