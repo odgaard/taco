@@ -187,6 +187,12 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
           dependency.push_back("chunk_size");
           HMParam["dependencies"] = json(dependency);
         }
+        if(InParam->getName() == "omp_scheduling_type") {
+          HMParam["parameter_default"] = 0;
+        }
+        if(InParam->getName() == "omp_chunk_size") {
+          HMParam["parameter_default"] = 0;
+        }
         else if(InParam->getName() == "chunk_size") {
           std::vector<std::string> constraint;
           // constraint.push_back("(chunk_size & (chunk_size - 1)) == 0");
@@ -316,8 +322,10 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
 
   // std::vector<int> chunkSizeRange{1, 1024};
   // std::vector<int> unrollFactorRange{1, 1024};
-  std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
-  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
+  std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
+  std::vector<int> ompSchedulingType{0,1};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
   chunkSizeParam->setRange(chunkSizeValues);
@@ -327,6 +335,17 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
   unrollFactorParam->setRange(unrollFactorValues);
   InParams.push_back(unrollFactorParam);
+  numParams++;
+
+  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
+  ompChunkSizeParam->setRange(ompChunkSizeValues);
+  InParams.push_back(ompChunkSizeParam);
+  numParams++;
+
+  // FIXME: For some reason categorical fails for this param
+  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
+  ompSchedulingTypeParam->setRange(ompSchedulingType);
+  InParams.push_back(ompSchedulingTypeParam);
   numParams++;
 
   int reorder_size = 5;
@@ -589,13 +608,14 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  // int order = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
 
   std::vector<int> default_ordering;
   std::vector<int> loop_ordering;
   for(int i = 0; i < num_loops; i++) {
     // std::cout << "in here\n";
-    int order = static_cast<HMInputParam<int>*>(InputParams[i + 2])->getVal();
+    int order = static_cast<HMInputParam<int>*>(InputParams[i + 4])->getVal();
     loop_ordering.push_back(order);
     default_ordering.push_back(i);
   }
@@ -623,7 +643,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
 
   bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  int num_reps = 10;
+  int num_reps = 30;
   double total_time = 0.0;
   std::vector<double> compute_times;
   for(int i = 0; i < num_reps; i++) {
@@ -781,7 +801,7 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 int main(int argc, char **argv) {
 
-    setenv("HYPERMAPPER_HOME", "/home/ubuntu/workspace/hypermapper_dev", true);
+    setenv("HYPERMAPPER_HOME", "/home/ubuntu/hypermapper_dev", true);
     printf("Setting HM variable\n");
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
@@ -790,6 +810,9 @@ int main(int argc, char **argv) {
   }
 
   srand(0);
+
+  taco::taco_set_num_threads(32);
+  std::cout << "num_threads: " << taco::taco_get_num_threads() << std::endl;
 
   // std::string test_name = "SpMM";
   std::string test_name, optimization;
@@ -952,7 +975,7 @@ int main(int argc, char **argv) {
   cmdPareto += " " + JSonFileNameStr;
   cmdPareto += " -i outdata -o " + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
-  cmdPareto += " -t " + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
+  cmdPareto += " -t \"" + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "\"";
   cmdPareto += " -doe ";
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
