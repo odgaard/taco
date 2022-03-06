@@ -80,7 +80,7 @@ struct UfuncInputCache {
     return tensor;
   }
   template<typename U>
-  taco::Tensor<double> getMat(std::string path, U format, bool countNNZ = false, int num_k = 1000, bool includeThird = false) {
+  taco::Tensor<double> getMat(std::string path, U format, bool countNNZ = false, bool includeThird = false) {
     // See if the paths match.
     if (this->lastPath == path) {
       // TODO (rohany): Not worrying about whether the format was the same as what was asked for.
@@ -110,6 +110,7 @@ struct UfuncInputCache {
     // }
     return this->inputTensor;
   }
+
   template<typename U>
   std::pair<taco::Tensor<double>, taco::Tensor<double>> getUfuncInput(std::string path, U format, bool countNNZ = false, int num_k = 1000, bool includeThird = false) {
     // See if the paths match.
@@ -397,8 +398,12 @@ public:
         if (initialized)
             return;
 
+        if (NUM_K == 0) {
+          cout << "manually set spmm_handler->NUM_K" << endl;
+          exit(1);
+        }
+
         if (matrix_name != "random") {
-            NUM_K = 1000;
             ssTensors mtxTensors;
             if (matrix_name == "auto") {
                 std::tie(B, C) = load_tensor(mtxTensors.tensors[0], NUM_K);
@@ -566,12 +571,16 @@ public:
         if (initialized)
             return;
 
+        if (NUM_J == 0) {
+          cout << "manually set sddmm_handler->NUM_J" << endl;
+          exit(1);
+        }
+
         srand(268238);
         if(matrix_name != "random") {
-            NUM_K = 1000;
             ssTensors mtxTensors;
             if (matrix_name == "auto") {
-                B = inputCache.getMat(mtxTensors.tensors[0], taco::CSR, true, NUM_K);
+                B = inputCache.getMat(mtxTensors.tensors[0], taco::CSR, true);
                 std::cout << mtxTensors.tensors[0] << endl;
                 B.pack();
             } else {
@@ -591,41 +600,41 @@ public:
                 // exit(1);
             }
             NUM_I = B.getDimension(0);
-            NUM_J = B.getDimension(1);
+            NUM_K = B.getDimension(1);
         }
         else {
             for (int i = 0; i < NUM_I; i++)
             {
-                for (int j = 0; j < NUM_J; j++)
+                for (int k = 0; k < NUM_K; k++)
                 {
                     float rand_float = (float)rand() / (float)(RAND_MAX);
                     if (rand_float < SPARSITY)
                     {
-                        B.insert({i, j}, (double)((int)(rand_float * 3 / SPARSITY)));
+                        B.insert({i, k}, (double)((int)(rand_float * 3 / SPARSITY)));
                     }
                 }
             }
         }
-        taco::Tensor<double> result("A", {NUM_I, NUM_J}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
+        taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
         A = result;
-        taco::Tensor<double> C_tmp({NUM_I, NUM_K}, dense);
+        taco::Tensor<double> C_tmp({NUM_I, NUM_J}, dense);
         for (int i = 0; i < NUM_I; i++)
-        {
-            for (int k = 0; k < NUM_K; k++)
-            {
-                float rand_float = (float)rand() / (float)(RAND_MAX);
-                C_tmp.insert({i, k}, (double)((int)(rand_float * 3 / SPARSITY)));
-            }
-        }
-        C = C_tmp;
-
-        taco::Tensor<double> D_tmp({NUM_K, NUM_J}, dense);
-        for (int k = 0; k < NUM_K; k++)
         {
             for (int j = 0; j < NUM_J; j++)
             {
                 float rand_float = (float)rand() / (float)(RAND_MAX);
-                D_tmp.insert({k, j}, (double)((int)(rand_float * 3 / SPARSITY)));
+                C_tmp.insert({i, j}, (double)((int)(rand_float * 3 / SPARSITY)));
+            }
+        }
+        C = C_tmp;
+
+        taco::Tensor<double> D_tmp({NUM_J, NUM_K}, dense);
+        for (int j = 0; j < NUM_J; j++)
+        {
+            for (int k = 0; k < NUM_K; k++)
+            {
+                float rand_float = (float)rand() / (float)(RAND_MAX);
+                D_tmp.insert({j ,k}, (double)((int)(rand_float * 3 / SPARSITY)));
             }
         }
         D = D_tmp;
@@ -634,7 +643,12 @@ public:
         C.pack();
         D.pack();
 
-        A(i,j) = B(i,j) * C(i,k) * D(k,j);
+        A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        cout << "Matrix dimensions" << endl;
+        cout << "A: [" << A.getDimensions()[0] << "," << A.getDimensions()[1] << "]" << endl;
+        cout << "B: [" << B.getDimensions()[0] << "," << B.getDimensions()[1] << "]" << endl;
+        cout << "C: [" << C.getDimensions()[0] << "," << C.getDimensions()[1] << "]" << endl;
+        cout << "D: [" << D.getDimensions()[0] << "," << D.getDimensions()[1] << "]" << endl;
         // Avoid duplicate reinitialize
         initialized = true;
         std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
@@ -647,7 +661,9 @@ public:
     void compute_cold_run() {
         A.compile(stmt);
         A.assemble();
+        cout << "this is where it fails" << endl;
         A.compute();
+        cout << "not getting here" << endl;
     }
 
     taco::IndexStmt schedule(int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
@@ -713,7 +729,6 @@ public:
         timer.start();
         A.compute();
         timer.stop();
-
         compute_time = timer.getResult().mean;
         if (default_config)
         {

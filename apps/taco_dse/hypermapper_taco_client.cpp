@@ -506,6 +506,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     cout << "INITIALIZING" << endl;
     spmm_handler = new SpMM();
     spmm_handler->matrix_name = matrix_name;
+    spmm_handler->NUM_K = NUM_K;
     spmm_handler->initialize_data(1);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
@@ -547,9 +548,8 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
 
   //Initialize tensors
   int NUM_I = 10000;
-  int NUM_J = 10000;
-  int NUM_K = 1000;
-  int num_reps = 10;
+  int NUM_J = 1000;
+  int NUM_K = 10000;
   std::vector<double> compute_times;
 
   if(!initialized) {
@@ -557,6 +557,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
+    sddmm_handler->NUM_J = NUM_J;
     sddmm_handler->initialize_data(1);
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
@@ -674,7 +675,7 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
   }
 }
 
-void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
+void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
   std::vector<vector<double>> obj_values(120, vector<double>(7));
   using namespace taco;
@@ -691,6 +692,7 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
     // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
+    sddmm_handler->NUM_J = NUM_J;
     // spmm_handler->initialize_data(0);
     sddmm_handler->initialize_data(1);
     initialized = true;
@@ -754,8 +756,8 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
     cout << endl;
     permutation_idx ++;
   } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
-
 }
+
 void SpMMVarianceTest(std::ofstream &logger) {
    using namespace taco;
 
@@ -763,9 +765,6 @@ void SpMMVarianceTest(std::ofstream &logger) {
   int NUM_J = 67173;
   int NUM_K = 1000;
   float _sparsity = .982356;
-
-  int num_reps = 500;
-
 
   std::vector<std::vector<double>> obj_vals;
   std::vector<double> chunk_sizes{16, 8, 4, 32, 64, 512, 1024};
@@ -863,6 +862,17 @@ int main(int argc, char **argv) {
   else
     matrix_name = argv[5];
 
+  bool exh_search = false;
+  if (argv[6] == nullptr) {
+    cout << "A" << endl;
+  } else {
+    if (std::stoi(argv[6]) == 1) {
+      cout << "C" << endl;
+      exh_search = true;
+    }
+  }
+  cout << exh_search << endl;
+
   bool log_exists = fs::exists(log_file);
 
   std::ofstream logger(log_file, std::ios_base::app);
@@ -871,8 +881,8 @@ int main(int argc, char **argv) {
     logger << "Op,Size,Chunk size,Time" << std::endl;
   }
 
-  if (true) {
-    spMMExhaustiveSearch(matrix_name, logger);
+  if (exh_search) {
+    sddmmExhaustiveSearch(matrix_name, logger);
     exit(1);
   }
 
