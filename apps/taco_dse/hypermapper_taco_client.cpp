@@ -681,7 +681,7 @@ void spMMExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
   int NUM_I = 67173;
   int NUM_J = 67173;
-  int NUM_K = 1000;
+  int NUM_K = 256;
   float _sparsity = .982356;
   std::vector<int> default_ordering{0,1,2,3,4};
   std::vector<double> compute_times;
@@ -834,6 +834,8 @@ int main(int argc, char **argv) {
     printf("Setting HM variable\n");
     // fatalError(ErrMsg);
   }
+
+  taco::taco_set_num_threads(32);
 
   // srand(0);
 
