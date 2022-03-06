@@ -80,7 +80,7 @@ struct UfuncInputCache {
     return tensor;
   }
   template<typename U>
-  taco::Tensor<double> getMat(std::string path, U format, bool countNNZ = false, int num_k = 1000, bool includeThird = false) {
+  taco::Tensor<double> getMat(std::string path, U format, bool countNNZ = false, bool includeThird = false) {
     // See if the paths match.
     if (this->lastPath == path) {
       // TODO (rohany): Not worrying about whether the format was the same as what was asked for.
@@ -110,6 +110,7 @@ struct UfuncInputCache {
     // }
     return this->inputTensor;
   }
+
   template<typename U>
   std::pair<taco::Tensor<double>, taco::Tensor<double>> getUfuncInput(std::string path, U format, bool countNNZ = false, int num_k = 1000, bool includeThird = false) {
     // See if the paths match.
@@ -160,6 +161,7 @@ class tacoOp {
 public:
     double compute_time;
     double default_compute_time;
+    std::string matrix_name;
     LoopReordering<taco::IndexVar>* reorderings;
     tacoOp() : compute_time{0.0}, default_compute_time{0.0} {}
     ~tacoOp() { delete reorderings; }
@@ -169,11 +171,11 @@ public:
     double get_default_compute_time() { return default_compute_time; }
     void compute_reordering(std::vector<taco::IndexVar>& ordering) {
         // TODO: Figure out how to reuse the same ordering addresses
-        // if(reorder_initialized) 
+        // if(reorder_initialized)
         //     return;
         // TODO: Remove
         // return;
-        reorderings = new LoopReordering(ordering);
+        reorderings = new LoopReordering<taco::IndexVar>(ordering);
         reorderings->compute_permutations();
     }
     std::pair<taco::Tensor<double>, taco::Tensor<double>> load_tensor(std::string tensorPath, int num_k = 1000) {
@@ -183,7 +185,7 @@ public:
             exit(1);
         }
         // std::string fullpath = std::string(suitesparsePath) + "/" + tensorPath;
-        return inputCache.getUfuncInput(tensorPath, taco::CSR, true);
+        return inputCache.getUfuncInput(tensorPath, taco::CSR, true, num_k = num_k);
     }
     std::vector<taco::IndexVar> get_reordering(int index) {
         std::vector<taco::IndexVar> temp(reorderings->get_reordering(index));
@@ -396,15 +398,31 @@ public:
         if (initialized)
             return;
 
-        if(mode == MTX) {
-            NUM_K = 1000;
+        if (NUM_K == 0) {
+          cout << "manually set spmm_handler->NUM_K" << endl;
+          exit(1);
+        }
+
+        if (matrix_name != "random") {
             ssTensors mtxTensors;
-            std::tie(B, C) = load_tensor(mtxTensors.tensors[0], NUM_K);
+            if (matrix_name == "auto") {
+                std::tie(B, C) = load_tensor(mtxTensors.tensors[0], NUM_K);
+            } else {
+                auto ssPath = std::getenv("SUITESPARSE_PATH");
+                string ssPathStr = std::string(ssPath);
+                char sep = '/';
+                std::string matrix_path;
+                if (ssPathStr[ssPathStr.length()] == sep) {
+                    matrix_path = ssPathStr + matrix_name;
+                } else {
+                    matrix_path = ssPathStr + "/" + matrix_name;
+                }
+                std::tie(B, C) = load_tensor(matrix_path, NUM_K);
+            }
             NUM_I = B.getDimensions()[0];
             NUM_J = B.getDimensions()[1];
-            std::cout << mtxTensors.tensors[0] << std::endl;
-            taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
-            A = result;
+
+
             // A.pack();
             // std::cout << A << std::endl;
         }
@@ -431,7 +449,8 @@ public:
                 }
             }
         }
-
+        taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
+        A = result;
 
         B.pack();
         C.pack();
@@ -447,6 +466,7 @@ public:
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
         get_reordering(reorder, order);
+        taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, 128);
         return stmt.split(i, i0, i1, CHUNK_SIZE)
                 .pos(j, jpos, B(i,j))
                 .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
@@ -504,6 +524,7 @@ public:
         {
             default_compute_time = timer.getResult().mean;
         }
+        timer.clear_cache();
     }
 
     taco::Tensor<double> get_B() { return B; }
@@ -521,8 +542,9 @@ public:
     taco::Tensor<double> B;
     taco::Tensor<double> C;
     taco::Tensor<double> D;
-    taco::IndexStmt stmt; 
-    taco::IndexVar i0, i1, kpos, kpos0, kpos1;
+    taco::IndexStmt stmt;
+    // taco::IndexVar i0, i1, kpos, kpos0, kpos1;
+    taco::IndexVar i0, i1, jpos, jpos0, jpos1;
     int run_mode;
     SDDMM(int mode, int NUM_I = 10000, int NUM_J = 10000, int NUM_K = 1000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                                          NUM_J{NUM_J},
@@ -530,31 +552,55 @@ public:
                                                                                          SPARSITY{SPARSITY},
                                                                                          initialized{false},
                                                                                          cold_run{true},
-                                                                                         A("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
-                                                                                         B("B", {NUM_I, NUM_K}, taco::CSR),
-                                                                                         C("C", {NUM_I, NUM_J}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
-                                                                                         D("D", {NUM_J, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
-                                                                                         i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1"), run_mode(0)
+                                                                                         A("A", {NUM_I, NUM_J}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
+                                                                                         B("B", {NUM_I, NUM_J}, taco::CSR),
+                                                                                         C("C", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
+                                                                                         D("D", {NUM_K, NUM_J}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense}),
+                                                                                        //  i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1"), run_mode(0)
+                                                                                         i0("i0"), i1("i1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1"), run_mode(0)
     {
     }
     SDDMM() : run_mode(1), initialized{false}, cold_run{true},
-              i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
+            //   i0("i0"), i1("i1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
+              i0("i0"), i1("i1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1") {}
     void initialize_data(int mode = RANDOM) override
     {
         //TODO: Implement read from matrix market mode
-        
         using namespace taco;
         // Sanity check
         if (initialized)
             return;
 
+        if (NUM_J == 0) {
+          cout << "manually set sddmm_handler->NUM_J" << endl;
+          exit(1);
+        }
+
         srand(268238);
-        if(mode == MTX) { 
-            NUM_K = 1000;
+        if(matrix_name != "random") {
             ssTensors mtxTensors;
-            B = inputCache.getMat(mtxTensors.tensors[3], taco::CSR, true);
+            if (matrix_name == "auto") {
+                B = inputCache.getMat(mtxTensors.tensors[0], taco::CSR, true);
+                std::cout << mtxTensors.tensors[0] << endl;
+                B.pack();
+            } else {
+                auto ssPath = std::getenv("SUITESPARSE_PATH");
+                string ssPathStr = std::string(ssPath);
+                char sep = '/';
+                std::string matrix_path;
+                if (ssPathStr[ssPathStr.length() - 1] == sep) {
+                    matrix_path = ssPathStr + matrix_name;
+                } else {
+                    matrix_path = ssPathStr + "/" + matrix_name;
+                }
+                B = inputCache.getMat(matrix_path, taco::CSR, true, NUM_K);
+                std::cout << matrix_path << endl;
+                B.pack();
+                // std::cout << B << std::endl;
+                // exit(1);
+            }
             NUM_I = B.getDimension(0);
-            NUM_J = B.getDimension(1);
+            NUM_K = B.getDimension(1);
         }
         else {
             for (int i = 0; i < NUM_I; i++)
@@ -569,7 +615,8 @@ public:
                 }
             }
         }
-
+        taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
+        A = result;
         taco::Tensor<double> C_tmp({NUM_I, NUM_J}, dense);
         for (int i = 0; i < NUM_I; i++)
         {
@@ -587,7 +634,7 @@ public:
             for (int k = 0; k < NUM_K; k++)
             {
                 float rand_float = (float)rand() / (float)(RAND_MAX);
-                D_tmp.insert({j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
+                D_tmp.insert({j ,k}, (double)((int)(rand_float * 3 / SPARSITY)));
             }
         }
         D = D_tmp;
@@ -597,16 +644,26 @@ public:
         D.pack();
 
         A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        cout << "Matrix dimensions" << endl;
+        cout << "A: [" << A.getDimensions()[0] << "," << A.getDimensions()[1] << "]" << endl;
+        cout << "B: [" << B.getDimensions()[0] << "," << B.getDimensions()[1] << "]" << endl;
+        cout << "C: [" << C.getDimensions()[0] << "," << C.getDimensions()[1] << "]" << endl;
+        cout << "D: [" << D.getDimensions()[0] << "," << D.getDimensions()[1] << "]" << endl;
         // Avoid duplicate reinitialize
         initialized = true;
-        std::vector<taco::IndexVar> reorder_{i0, i1, kpos0, j, kpos1};
+        std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
+        // std::vector<taco::IndexVar> reorder_{i0, i1, kpos0, j, kpos1};
         compute_reordering(reorder_);
     }
+    float get_sparsity() { return (matrix_name == "random") ? SPARSITY : inputCache.get_sparsity(); }
+    int get_num_j() { return NUM_J; }
 
     void compute_cold_run() {
         A.compile(stmt);
         A.assemble();
+        cout << "this is where it fails" << endl;
         A.compute();
+        cout << "not getting here" << endl;
     }
 
     taco::IndexStmt schedule(int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
@@ -614,11 +671,13 @@ public:
         using namespace taco;
         std::vector<taco::IndexVar> reorder = get_reordering(order);
         return stmt.split(i, i0, i1, CHUNK_SIZE)
-                .pos(k, kpos, B(i,k))
-                .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
+                .pos(j, jpos, B(i,j))
+                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                // .pos(k, kpos, B(i,j))
+                // .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
-                .parallelize(kpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
+                .parallelize(jpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
     }
 
     taco::IndexStmt schedule(std::vector<int> order, int CHUNK_SIZE=16, int UNROLL_FACTOR=8) {
@@ -627,23 +686,28 @@ public:
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
         get_reordering(reorder, order);
+        taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, 16);
         return stmt.split(i, i0, i1, CHUNK_SIZE)
-                .pos(k, kpos, B(i,k))
-                .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
+                .pos(j, jpos, B(i,j))
+                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                // .pos(k, kpos, B(i,j))
+                // .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
-                .parallelize(kpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
+                .parallelize(jpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
     }
 
     void generate_schedule(int chunk_size, int unroll_factor, int order) {
-        A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        A(i,j) = B(i,j) * C(i,k) * D(k,j);
 
         stmt = A.getAssignment().concretize();
         stmt = schedule(chunk_size, unroll_factor, order);
     }
 
     void generate_schedule(int chunk_size, int unroll_factor, std::vector<int> order) {
-        A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        A(i,j) = B(i,j) * C(i,k) * D(k,j);
 
         stmt = A.getAssignment().concretize();
         stmt = schedule(order, chunk_size, unroll_factor);
@@ -658,18 +722,19 @@ public:
 
         taco::util::Timer timer;
 
-        A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        A(i,j) = B(i,j) * C(i,k) * D(k,j);
         A.compile(stmt);
         A.assemble();
         timer.start();
         A.compute();
         timer.stop();
-
         compute_time = timer.getResult().mean;
         if (default_config)
         {
             default_compute_time = timer.getResult().mean;
         }
+        timer.clear_cache();
     }
 
 };
@@ -685,7 +750,7 @@ public:
     taco::Tensor<double> A;
     taco::Tensor<double> B;
     taco::Tensor<double> c;
-    taco::IndexStmt stmt; 
+    taco::IndexStmt stmt;
     taco::IndexVar f, fpos, chunk, fpos2;
     TTV(int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
@@ -794,7 +859,7 @@ public:
     taco::Tensor<double> A;
     taco::Tensor<double> B;
     taco::Tensor<double> C;
-    taco::IndexStmt stmt; 
+    taco::IndexStmt stmt;
     taco::IndexVar f, fpos, chunk, fpos2, kpos, kpos1, kpos2;
     TTM(int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, int NUM_L = 1000, float SPARSITY = .1) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
