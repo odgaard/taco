@@ -10,23 +10,26 @@ template <class T> class HMInputParam;
 void fatalError(const std::string &msg);
 
 // Enum for HyperMapper parameter types
-enum ParamType { Real, Integer, Ordinal, Categorical };
-enum DataType { Int, Float };
+enum ParamType { Real, Integer, Ordinal, Categorical, Permutation };
+enum DataType { Int, Float, IntVector };
 
 std::ostream &operator<<(std::ostream &out, const ParamType &PT) {
   switch (PT) {
-  case Real:
-    out << "Real";
-    break;
-  case Integer:
-    out << "Integer";
-    break;
-  case Ordinal:
-    out << "Ordinal";
-    break;
-  case Categorical:
-    out << "Categorical";
-    break;
+    case Real:
+      out << "Real";
+      break;
+    case Integer:
+      out << "Integer";
+      break;
+    case Ordinal:
+      out << "Ordinal";
+      break;
+    case Categorical:
+      out << "Categorical";
+      break;
+    case Permutation:
+      out << "Permutation";
+      break;
   }
   return out;
 }
@@ -46,6 +49,9 @@ std::string getTypeAsString(const ParamType &PT) {
   case Categorical:
     TypeString = "categorical";
     break;
+  case Permutation:
+    TypeString = "permutation";
+    break;
   }
 
   return TypeString;
@@ -56,7 +62,7 @@ private:
   std::string Name;
   std::string const Key;
   ParamType Type;
-  inline static int count = 0;
+  int count = 0;
   DataType DType;
 
 public:
@@ -153,7 +159,7 @@ public:
     if(permutations)
       delete [] permutations;
   }
-  
+
   void compute_permutations() {
     int count = 0;
     int reorder_size = reorder.size();
@@ -163,7 +169,7 @@ public:
       count++;
     } while(std::next_permutation(index_arr, index_arr + reorder_size));
   }
-  
+
   int get_num_reorderings() { return num_orderings; }
 
   std::vector<T> get_reordering(int index) {
@@ -219,6 +225,8 @@ public:
           setDType(Int);
         else if (std::is_same<T, float>::value)
           setDType(Float);
+        else if (std::is_same<T, std::vector<int>>::value)
+          setDType(IntVector);
         else
           fatalError("Unhandled data type used for input parameter. New data types can be added by augmenting the DataType enum, and modifying this constructor accordingly.");
       }
@@ -247,7 +255,7 @@ public:
     }
   }
 
-  void print(std::ostream &out) const {
+  void print(std::ostream &out) {
     if (getType() == ParamType::Ordinal ||
         getType() == ParamType::Categorical) {
       out << "\n  Range: {";
@@ -263,6 +271,14 @@ public:
       char separator[1] = "";
       for (auto i : getRange()) {
         out << separator << i;
+        separator[0] = ',';
+      }
+      out << "]";
+    } else if (getType() == ParamType::Permutation) {
+      out << "\n  Range: [";
+      char separator[1] = "";
+      for (std::vector<int> i : getRange()) {
+        out << separator << i[0];
         separator[0] = ',';
       }
       out << "]";
