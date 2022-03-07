@@ -162,7 +162,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   HMScenario["output_pareto_file"] =
       OutputFoldername + "/" + AppName + "_output_pareto.csv";
   HMScenario["output_image"]["output_image_pdf_file"] =
-      OutputFoldername + "_" + AppName + "_" + taco_op + "_output_image.pdf";
+      OutputFoldername + "_" + AppName + "_output_image.pdf";
 
   json HMDOE;
   HMDOE["doe_type"] = "random sampling";
@@ -650,7 +650,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
   int num_reps = 30;
   double total_time = 0.0;
-  std::vector<double> compute_times;
+  compute_times = std::vector<double>();
   for(int i = 0; i < num_reps; i++) {
     spmm_handler->compute(false);
     compute_times.push_back(spmm_handler->get_compute_time());
@@ -952,12 +952,10 @@ int main(int argc, char **argv) {
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
     ErrMsg += "Please set HYPERMAPPER_HOME before running this ";
-    setenv("HYPERMAPPER_HOME", "/home/ubuntu/workspace/hypermapper_dev", true);
+    setenv("HYPERMAPPER_HOME", "/home/ubuntu/hypermapper_dev", true);
     printf("Setting HM variable\n");
     // fatalError(ErrMsg);
   }
-
-  taco::taco_set_num_threads(32);
 
   // srand(0);
 
