@@ -627,7 +627,8 @@ public:
                 // exit(1);
             }
             NUM_I = B.getDimension(0);
-            NUM_K = B.getDimension(1);
+            NUM_J = B.getDimension(1);
+            NUM_K = 256;
         }
         else {
             for (int i = 0; i < NUM_I; i++)
