@@ -615,6 +615,8 @@ public:
                 std::cout << mtxTensors.tensors[0] << endl;
                 B.pack();
             } else {
+                // get the suitesparse path and merge it with the matrx name.
+                // Add "/" in between if not included in suitesparse path.
                 auto ssPath = std::getenv("SUITESPARSE_PATH");
                 string ssPathStr = std::string(ssPath);
                 char sep = '/';
@@ -677,12 +679,13 @@ public:
         D.pack();
 
         A(i,j) = B(i,j) * C(i,k) * D(k,j);
-        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+
         cout << "Matrix dimensions" << endl;
         cout << "A: [" << A.getDimensions()[0] << "," << A.getDimensions()[1] << "]" << endl;
         cout << "B: [" << B.getDimensions()[0] << "," << B.getDimensions()[1] << "]" << endl;
         cout << "C: [" << C.getDimensions()[0] << "," << C.getDimensions()[1] << "]" << endl;
         cout << "D: [" << D.getDimensions()[0] << "," << D.getDimensions()[1] << "]" << endl;
+        
         // Avoid duplicate reinitialize
         initialized = true;
         std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};

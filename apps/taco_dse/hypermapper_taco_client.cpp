@@ -138,6 +138,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
       fatalError("Unable to create Directory: " + OutputDir);
     }
   }
+
+  // read and load the json template
   json HMScenario;
   std::ifstream json_template(AppName + ".json", std::ifstream::binary);
   if (!json_template) {
@@ -146,6 +148,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   }
   json_template >> HMScenario;
 
+  // set the dynamic features
   HMScenario["optimization_objectives"] = json(Objectives);
   HMScenario["run_directory"] = CurrentDir;
   HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + ".log";
@@ -164,8 +167,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   HMScenario["output_image"]["output_image_pdf_file"] =
       OutputFoldername + "_" + AppName + "_output_image.pdf";
 
+  // save the completed json file in the output directory
   ofstream HyperMapperScenarioFile;
-
   std::string JSonFileNameStr =
       CurrentDir + "/" + OutputFoldername + "/" + AppName + "_" + optimization + "_scenario.json";
 
@@ -891,16 +894,19 @@ int main(int argc, char **argv) {
   std::string count = argv[3];
   std::string log_file = "hypermapper_taco_log.csv";
 
+  // user input for the number of times to run each configuration
   if (argv[4] == nullptr)
     num_reps = 10;
   else
     num_reps = std::stoi(argv[4]);
 
+  // if a specific matrix is to be used
   if (argv[5] == nullptr)
     matrix_name = "auto";
   else
     matrix_name = argv[5];
 
+  // 1 if exhaustive search
   bool exh_search = false;
   if (argv[6] == nullptr) {
   } else {
@@ -922,16 +928,13 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  if (false) {
-    SpMMVarianceTest(logger);
-    exit(1);
-  }
   // Set these values accordingly
 
   std::string OutputFoldername;
   if (matrix_name == "auto") {
     OutputFoldername = "outdata_" + test_name;
   } else {
+    // remove the file-ending of the matrix name add it to the output folder name
     size_t lastindex = matrix_name.find_last_of(".");
     string rawname = matrix_name.substr(0, lastindex);
     OutputFoldername = "outdata_" + test_name + "_" + rawname;
@@ -962,8 +965,6 @@ int main(int argc, char **argv) {
   for (auto param : InParams) {
     std::cout << "Param: " << *param << "\n";
   }
-
-    // exit(1);
 
   const int max_buffer = 1000;
   char buffer[max_buffer];
