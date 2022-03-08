@@ -467,30 +467,30 @@ public:
         return equals(expected, actual);
     }
 
-    taco::IndexStmt schedule(std::vector<int> order, int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int OMP_CHUNK_SIZE=1, int OMP_SCHEDULING_TYPE=0) {
+    taco::IndexStmt schedule(std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=1) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
         get_reordering(reorder, order);
-        if(OMP_SCHEDULING_TYPE == 0) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, OMP_CHUNK_SIZE);
+        if(omp_scheduling_type == 0) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
         }
-        else if(OMP_SCHEDULING_TYPE == 1) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, OMP_CHUNK_SIZE);
+        else if(omp_scheduling_type == 1) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
         }
-        return stmt.split(i, i0, i1, CHUNK_SIZE)
+        return stmt.split(i, i0, i1, chunk_size)
                 .pos(j, jpos, B(i,j))
-                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                .split(jpos, jpos0, jpos1, unroll_factor)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
                 .parallelize(k, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
     }
-    taco::IndexStmt schedule(int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
+    taco::IndexStmt schedule(int chunk_size=16, int unroll_factor=8, int order=0) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder = get_reordering(order);
-        return stmt.split(i, i0, i1, CHUNK_SIZE)
+        return stmt.split(i, i0, i1, chunk_size)
                 .pos(j, jpos, B(i,j))
-                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                .split(jpos, jpos0, jpos1, unroll_factor)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
                 .parallelize(k, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
@@ -507,6 +507,15 @@ public:
 
         stmt = A.getAssignment().concretize();
         stmt = schedule(order, chunk_size, unroll_factor);
+    }
+
+    // THIS IS THE RELEVANT ONE
+    void generate_schedule(int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type, int omp_chunk_size, int num_threads) {
+        A(i, k) = B(i, j) * C(j, k);
+
+        taco::taco_set_num_threads(num_threads);
+        stmt = A.getAssignment().concretize();
+        stmt = schedule(order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
     }
 
     void compute_cold_run() {
@@ -598,11 +607,6 @@ public:
         if (initialized)
             return;
 
-        if (NUM_J == 0) {
-          cout << "manually set sddmm_handler->NUM_J" << endl;
-          exit(1);
-        }
-
         srand(268238);
         if(matrix_name != "random") {
             ssTensors mtxTensors;
@@ -611,6 +615,8 @@ public:
                 std::cout << mtxTensors.tensors[0] << endl;
                 B.pack();
             } else {
+                // get the suitesparse path and merge it with the matrx name.
+                // Add "/" in between if not included in suitesparse path.
                 auto ssPath = std::getenv("SUITESPARSE_PATH");
                 string ssPathStr = std::string(ssPath);
                 char sep = '/';
@@ -673,12 +679,13 @@ public:
         D.pack();
 
         A(i,j) = B(i,j) * C(i,k) * D(k,j);
-        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+
         cout << "Matrix dimensions" << endl;
         cout << "A: [" << A.getDimensions()[0] << "," << A.getDimensions()[1] << "]" << endl;
         cout << "B: [" << B.getDimensions()[0] << "," << B.getDimensions()[1] << "]" << endl;
         cout << "C: [" << C.getDimensions()[0] << "," << C.getDimensions()[1] << "]" << endl;
         cout << "D: [" << D.getDimensions()[0] << "," << D.getDimensions()[1] << "]" << endl;
+        
         // Avoid duplicate reinitialize
         initialized = true;
         std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
@@ -691,18 +698,16 @@ public:
     void compute_cold_run() {
         A.compile(stmt);
         A.assemble();
-        cout << "this is where it fails" << endl;
         A.compute();
-        cout << "not getting here" << endl;
     }
 
-    taco::IndexStmt schedule(int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int order=0) {
+    taco::IndexStmt schedule(int chunk_size=16, int unroll_factor=8, int order=0) {
         //TODO: Unroll factor needs to be less than the chunk size
         using namespace taco;
         std::vector<taco::IndexVar> reorder = get_reordering(order);
-        return stmt.split(i, i0, i1, CHUNK_SIZE)
+        return stmt.split(i, i0, i1, chunk_size)
                 .pos(j, jpos, B(i,j))
-                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                .split(jpos, jpos0, jpos1, unroll_factor)
                 // .pos(k, kpos, B(i,j))
                 // .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
                 .reorder(reorder)
@@ -710,22 +715,22 @@ public:
                 .parallelize(jpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
     }
 
-    taco::IndexStmt schedule(std::vector<int> order, int CHUNK_SIZE=16, int UNROLL_FACTOR=8, int OMP_SCHEDULING_TYPE=0, int OMP_CHUNK_SIZE=0) {
+    taco::IndexStmt schedule(std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=0) {
         using namespace taco;
         // std::vector<taco::IndexVar> reorder = get_reordering(order);
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
-        if(OMP_SCHEDULING_TYPE == 0) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, OMP_CHUNK_SIZE);
+        if(omp_scheduling_type == 0) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
         }
-        else if(OMP_SCHEDULING_TYPE == 1) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, OMP_CHUNK_SIZE);
+        else if(omp_scheduling_type == 1) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
         }
         get_reordering(reorder, order);
         taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, 16);
-        return stmt.split(i, i0, i1, CHUNK_SIZE)
+        return stmt.split(i, i0, i1, chunk_size)
                 .pos(j, jpos, B(i,j))
-                .split(jpos, jpos0, jpos1, UNROLL_FACTOR)
+                .split(jpos, jpos0, jpos1, unroll_factor)
                 // .pos(k, kpos, B(i,j))
                 // .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
                 .reorder(reorder)
@@ -741,20 +746,28 @@ public:
         stmt = schedule(chunk_size, unroll_factor, order);
     }
 
-    void generate_schedule(int chunk_size, int unroll_factor, std::vector<int> order, int OMP_SCHEDULING_TYPE=0, int OMP_CHUNK_SIZE=0, int NUM_THREADS=32) {
+    void generate_schedule(std::vector<int> order, int chunk_size, int unroll_factor) {
         // A(i,k) = B(i,k) * C(i,j) * D(j,k);
         A(i,j) = B(i,j) * C(i,k) * D(k,j);
 
-        taco::taco_set_num_threads(NUM_THREADS);
-        if(OMP_SCHEDULING_TYPE == 0) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, OMP_CHUNK_SIZE);
-        }
-        else if(OMP_SCHEDULING_TYPE == 1) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, OMP_CHUNK_SIZE);
-        }
-
         stmt = A.getAssignment().concretize();
         stmt = schedule(order, chunk_size, unroll_factor);
+    }
+
+    void generate_schedule(int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32) {
+        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
+        A(i,j) = B(i,j) * C(i,k) * D(k,j);
+
+        taco::taco_set_num_threads(num_threads);
+        // if(omp_scheduling_type == 0) {
+        //     taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
+        // }
+        // else if(OMP_SCHEDULING_TYPE == 1) {
+        //     taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
+        // }
+
+        stmt = A.getAssignment().concretize();
+        stmt = schedule(order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
     }
 
     void compute(bool default_config = false) override

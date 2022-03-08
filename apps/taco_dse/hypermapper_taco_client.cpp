@@ -138,6 +138,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
       fatalError("Unable to create Directory: " + OutputDir);
     }
   }
+
+  // read and load the json template
   json HMScenario;
   std::ifstream json_template(AppName + ".json", std::ifstream::binary);
   if (!json_template) {
@@ -146,6 +148,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   }
   json_template >> HMScenario;
 
+  // set the dynamic features
   HMScenario["optimization_objectives"] = json(Objectives);
   HMScenario["run_directory"] = CurrentDir;
   HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + ".log";
@@ -164,103 +167,8 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   HMScenario["output_image"]["output_image_pdf_file"] =
       OutputFoldername + "_" + AppName + "_output_image.pdf";
 
-  json HMDOE;
-  HMDOE["doe_type"] = "random sampling";
-  HMDOE["number_of_samples"] = NumDSERandomSamples;
-  if(optimization == "random_sampling") {
-    HMDOE["number_of_samples"] = NumDSERandomSamples + NumIterations;
-  }
-
-  HMScenario["design_of_experiment"] = HMDOE;
-
-  for (auto InParam : InParams) {
-    json HMParam;
-    HMParam["parameter_type"] = getTypeAsString(InParam->getType());
-    switch (InParam->getDType()) {
-      case Int:
-        HMParam["values"] = json(static_cast<HMInputParam<int>*>(InParam)->getRange());
-        if(InParam->getName() == "chunk_size2") {
-          std::vector<std::string> constraint;
-          constraint.push_back("chunk_size % chunk_size2 == 0");
-          HMParam["constraints"] = json(constraint);
-          std::vector<std::string> dependency;
-          dependency.push_back("chunk_size");
-          HMParam["dependencies"] = json(dependency);
-        }
-        if(InParam->getName() == "omp_scheduling_type") {
-          HMParam["parameter_default"] = 0;
-        }
-        if(InParam->getName() == "omp_chunk_size") {
-          HMParam["parameter_default"] = 0;
-        }
-        else if(InParam->getName() == "chunk_size") {
-          std::vector<std::string> constraint;
-          // constraint.push_back("(chunk_size & (chunk_size - 1)) == 0");
-          constraint.push_back("chunk_size % 2 == 0");
-          HMParam["constraints"] = json(constraint);
-          // std::vector<std::string> dependency;
-          // dependency.push_back("chunk_size");
-          // HMParam["dependencies"] = json(dependency);
-          HMParam["parameter_default"] = 16;
-        }
-        else if(InParam->getName() == "reordering") {
-          HMParam["parameter_default"] = 0;
-        }
-        else if(InParam->getName() == "unroll_factor") {
-          HMParam["parameter_default"] = 8;
-          std::vector<std::string> constraint;
-          constraint.push_back("unroll_factor < chunk_size");
-          constraint.push_back("unroll_factor % 2 == 0");
-          HMParam["constraints"] = json(constraint);
-          std::vector<std::string> dependency;
-          dependency.push_back("chunk_size");
-          HMParam["dependencies"] = json(dependency);
-        }
-        else if(InParam->getName() == "split") {
-          HMParam["parameter_default"] = 0;
-        }
-        else if(InParam->getName().find("loop") != std::string::npos) {
-            std::string param = InParam->getName();
-            std::vector<std::string> constraint;
-            std::vector<std::string> dependency;
-            int last_idx = std::stoi(std::string(1, InParam->getName().back()));
-            if(last_idx != 0) {
-              // int i = 0;
-              // for(int i = 0; i < num_loops; i++) {
-                int current_idx = std::stoi(std::string(1, param.back()));
-                // int i = current_idx - 1;
-                std::vector<int> consts;
-                // consts.push_back(i);
-                for(int i = current_idx - 1; i >= 0; i--) {
-                  consts.push_back(i);
-                }
-                for(auto idx : consts) {
-                  constraint.push_back(param + " != loop" + std::to_string(idx));
-                  dependency.push_back("loop" + std::to_string(idx));
-                }
-                // if(std::stoi(std::string(1, param.back())) != i) {
-                // }
-              // }
-              HMParam["constraints"] = json(constraint);
-              HMParam["dependencies"] = json(dependency);
-            }
-            else {
-              // constraint.push_back(param + " > -1");
-              // HMParam["constraints"] = json(constraint);
-            }
-            HMParam["parameter_default"] = last_idx;
-        }
-        break;
-      case Float:
-        HMParam["values"] = json(static_cast<HMInputParam<float>*>(InParam)->getRange());
-        break;
-    }
-    HMScenario["input_parameters"][InParam->getKey()] = HMParam;
-  }
-      OutputFoldername + "_" + AppName + "_output_image.pdf";
-
+  // save the completed json file in the output directory
   ofstream HyperMapperScenarioFile;
-
   std::string JSonFileNameStr =
       CurrentDir + "/" + OutputFoldername + "/" + AppName + "_" + optimization + "_scenario.json";
 
@@ -318,14 +226,12 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=
 
 // Function that populates input parameters
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
-  int numParams = 0;
 
-  // std::vector<int> chunkSizeRange{1, 1024};
-  // std::vector<int> unrollFactorRange{1, 1024};
+  int numParams = 0;
   std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
   std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompSchedulingType{0,1};
+  std::vector<int> ompSchedulingType{0, 1};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
   chunkSizeParam->setRange(chunkSizeValues);
@@ -337,15 +243,15 @@ int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(unrollFactorParam);
   numParams++;
 
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
   // FIXME: For some reason categorical fails for this param
   HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
   ompSchedulingTypeParam->setRange(ompSchedulingType);
   InParams.push_back(ompSchedulingTypeParam);
+  numParams++;
+
+  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
+  ompChunkSizeParam->setRange(ompChunkSizeValues);
+  InParams.push_back(ompChunkSizeParam);
   numParams++;
 
   int reorder_size = 5;
@@ -365,7 +271,8 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
 
   std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512};
   std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
-
+  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
+  std::vector<int> ompSchedulingType{0, 1};
 
   HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
   chunkSizeParam->setRange(chunkSizeValues);
@@ -375,6 +282,17 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
   HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
   unrollFactorParam->setRange(unrollFactorValues);
   InParams.push_back(unrollFactorParam);
+  numParams++;
+
+  // FIXME: For some reason categorical fails for this param
+  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
+  ompSchedulingTypeParam->setRange(ompSchedulingType);
+  InParams.push_back(ompSchedulingTypeParam);
+  numParams++;
+
+  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
+  ompChunkSizeParam->setRange(ompChunkSizeValues);
+  InParams.push_back(ompChunkSizeParam);
   numParams++;
 
   int reorder_size = 5;
@@ -582,8 +500,7 @@ HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputP
   return Obj;
 }
 
-double median(vector<double> vec)
-{
+double median(vector<double> vec) {
         typedef vector<int>::size_type vec_sz;
 
         vec_sz size = vec.size();
@@ -599,22 +516,17 @@ double median(vector<double> vec)
 
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[4])->getVal();
+  int num_threads = 32;
 
-  std::vector<int> default_ordering;
-  std::vector<int> loop_ordering;
-  for(int i = 0; i < num_loops; i++) {
-    // std::cout << "in here\n";
-    int order = static_cast<HMInputParam<int>*>(InputParams[i + 4])->getVal();
-    loop_ordering.push_back(order);
-    default_ordering.push_back(i);
-  }
-
+  std::vector<int> default_ordering{0,1,2,3,4};
   int NUM_I = 67173;
   int NUM_J = 67173;
   int NUM_K = 1000;
@@ -636,7 +548,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     std::vector<int> tmp_loop_ordering = default_ordering;
     int tmp_chunk_size = 16;
     int tmp_unroll_factor = 8;
-    spmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+    spmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering, omp_scheduling_type, omp_chunk_size, 32);
     compute_times = vector<double>();
     for(int i = 0; i < num_reps; i++) {
       spmm_handler->compute(true);
@@ -645,11 +557,8 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     default_config_time = median(compute_times);
   }
 
-  spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+  spmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
 
-  bool default_config = (chunk_size == 16 && unroll_factor == 8 && loop_ordering == default_ordering);
-  int num_reps = 30;
-  double total_time = 0.0;
   compute_times = std::vector<double>();
   for(int i = 0; i < num_reps; i++) {
     spmm_handler->compute(false);
@@ -666,7 +575,10 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[2])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[4])->getVal();
+  int num_threads = 32;
   std::vector<int> default_ordering{0,1,2,3,4};
 
   //Initialize tensors
@@ -680,7 +592,6 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
-    sddmm_handler->NUM_J = NUM_J;
     sddmm_handler->initialize_data(1);
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
@@ -701,7 +612,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
-  sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+  sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
 
   // bool default_config = (chunk_size == 16 && unroll_factor == 8 && order == 0);
   compute_times = vector<double>();
@@ -800,7 +711,7 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
 
 void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
-  std::vector<vector<double>> obj_values(120, vector<double>(7));
+  std::vector<std::vector<std::vector<double>>> obj_values(120, vector(7, vector<double>(2)));
   using namespace taco;
 
   int NUM_I = 67173;
@@ -815,12 +726,10 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
     // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
-    sddmm_handler->NUM_J = NUM_J;
     // spmm_handler->initialize_data(0);
     sddmm_handler->initialize_data(1);
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
-    num_j = sddmm_handler->get_num_j();
     op = "SDDMM";
 
     // Taco requires you to start with running the deafult
@@ -839,12 +748,17 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   std::string test_name = "SDDMM";
   std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512};
   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> ompSchedulingType{0, 1};
+  std::vector<int> ompChunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
   std::vector<int> loop_ordering{0, 1, 2, 3, 4};
   int unroll_factor = 8;
+  int chunk_size = 16;
+  int num_threads = 32;
+
 
   int permutation_idx = 0;
-  for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
-    int chunk_size = chunkSizeValues[chunkSize_idx];
+  for (int omp_chunk_size_idx = 0; omp_chunk_size_idx < 7; omp_chunk_size_idx++) {
+    int omp_chunk_size = ompChunkSizeValues[omp_chunk_size_idx];
     cout << chunk_size << endl;
 
     permutation_idx = 0;
@@ -855,26 +769,30 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
         cout << l << " ";
       }
       cout << endl;
-      sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering);
+      for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
+        sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
 
-      double total_time = 0.0;
-      for(int i = 0; i < num_reps; i++) {
-        sddmm_handler->compute(false);
-        total_time += sddmm_handler->get_compute_time();
+        double total_time = 0.0;
+        for(int i = 0; i < num_reps; i++) {
+          sddmm_handler->compute(false);
+          total_time += sddmm_handler->get_compute_time();
+        }
+
+        double compute_time = total_time / num_reps;
+        obj_values[permutation_idx][omp_chunk_size_idx][omp_scheduling_type] = compute_time;
       }
-
-      double compute_time = total_time / num_reps;
-      obj_values[permutation_idx][chunkSize_idx] = compute_time;
-
       permutation_idx ++;
     } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
   }
 
   std::vector<int> loop_ordering2{0, 1, 2, 3, 4};
   permutation_idx = 0;
+
   do {
-    for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
-      cout << obj_values[permutation_idx][chunkSize_idx] << " ";
+    for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
+      for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
+        cout << obj_values[permutation_idx][chunkSize_idx][omp_scheduling_type] << " ";
+      }
     }
     cout << endl;
     permutation_idx ++;
@@ -976,26 +894,26 @@ int main(int argc, char **argv) {
   std::string count = argv[3];
   std::string log_file = "hypermapper_taco_log.csv";
 
+  // user input for the number of times to run each configuration
   if (argv[4] == nullptr)
     num_reps = 10;
   else
     num_reps = std::stoi(argv[4]);
 
+  // if a specific matrix is to be used
   if (argv[5] == nullptr)
     matrix_name = "auto";
   else
     matrix_name = argv[5];
 
+  // 1 if exhaustive search
   bool exh_search = false;
   if (argv[6] == nullptr) {
-    cout << "A" << endl;
   } else {
     if (std::stoi(argv[6]) == 1) {
-      cout << "C" << endl;
       exh_search = true;
     }
   }
-  cout << exh_search << endl;
 
   bool log_exists = fs::exists(log_file);
 
@@ -1010,12 +928,17 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  if (false) {
-    SpMMVarianceTest(logger);
-    exit(1);
-  }
   // Set these values accordingly
-  std::string OutputFoldername = "outdata";
+
+  std::string OutputFoldername;
+  if (matrix_name == "auto") {
+    OutputFoldername = "outdata_" + test_name;
+  } else {
+    // remove the file-ending of the matrix name add it to the output folder name
+    size_t lastindex = matrix_name.find_last_of(".");
+    string rawname = matrix_name.substr(0, lastindex);
+    OutputFoldername = "outdata_" + test_name + "_" + rawname;
+  }
   std::string AppName = "cpp_taco_" + test_name;
   int dimensionality_plus_one = 10;
   int NumSamples = dimensionality_plus_one;
@@ -1042,8 +965,6 @@ int main(int argc, char **argv) {
   for (auto param : InParams) {
     std::cout << "Param: " << *param << "\n";
   }
-
-    // exit(1);
 
   const int max_buffer = 1000;
   char buffer[max_buffer];
@@ -1159,7 +1080,7 @@ int main(int argc, char **argv) {
   cmdPareto += getenv("HYPERMAPPER_HOME");
   cmdPareto += "/scripts/plot_optimization_results.py -j";
   cmdPareto += " " + JSonFileNameStr;
-  cmdPareto += " -i outdata -o " + test_name + "_plot.png";
+  cmdPareto += " -i " + OutputFoldername + " -o " + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
   cmdPareto += " -t '" + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
   cmdPareto += " -doe ";
