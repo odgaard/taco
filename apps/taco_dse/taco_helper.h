@@ -400,6 +400,7 @@ public:
         if (initialized)
             return;
 
+        NUM_K = 256;
         if (NUM_K == 0) {
           cout << "manually set spmm_handler->NUM_K" << endl;
           exit(1);
@@ -451,12 +452,12 @@ public:
                 }
             }
         }
-        taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
-        A = result;
+        // taco::Tensor<double> result("A", {NUM_I, NUM_K}, taco::Format{taco::ModeFormat::Dense, taco::ModeFormat::Dense});
+        // A = result;
 
         B.pack();
         C.pack();
-        A(i, k) = B(i, j) * C(j, k);
+        // A(i, k) = B(i, j) * C(j, k);
         std::vector<taco::IndexVar> reorder_{i0, i1, jpos0, k, jpos1};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
@@ -467,11 +468,12 @@ public:
         return equals(expected, actual);
     }
 
-    taco::IndexStmt schedule(std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=1) {
+    taco::IndexStmt schedule(std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=1, int num_threads=32) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
         get_reordering(reorder, order);
+        taco::taco_set_num_threads(num_threads);
         if(omp_scheduling_type == 0) {
             taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
         }
@@ -510,24 +512,32 @@ public:
     }
 
     // THIS IS THE RELEVANT ONE
-    void generate_schedule(int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type, int omp_chunk_size, int num_threads) {
-        A(i, k) = B(i, j) * C(j, k);
+    void generate_schedule(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type, int omp_chunk_size, int num_threads) {
+        result(i, k) = B(i, j) * C(j, k);
 
         taco::taco_set_num_threads(num_threads);
-        stmt = A.getAssignment().concretize();
+        stmt = result.getAssignment().concretize();
+        // std::vector<int> order_{0,1,2,3,4};
+        // stmt = schedule(order_, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
         stmt = schedule(order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
     }
 
-    void compute_cold_run() {
-        A.compile(stmt);
-        A.assemble();
-        A.compute();
+    void compute_cold_run(taco::Tensor<double> &result) {
+        result.compile(stmt);
+        result.assemble();
+        result.compute();
     }
-    void compute(bool default_config = false) override
+    void set_cold_run() { cold_run = true; }
+    void compute(bool default_config = false) {
+
+    }
+    void compute(taco::Tensor<double> &result, bool default_config = false) 
     {
         if(cold_run) {
-            std::cout << "Computing cold run" << std::endl;
-            compute_cold_run();
+            // std::cout << "Computing cold run" << std::endl;
+
+            for(int i = 0; i < 3; i++) 
+                compute_cold_run(result);
             // taco::Tensor<double> expected_(A.getDimensions(), A.getFormat());
             // expected = expected_;
             // expected(i, k) = B(i, j) * C(j, k);
@@ -538,12 +548,12 @@ public:
         }
         taco::util::Timer timer;
 
-        A(i, k) = B(i, j) * C(j, k);
-        A.compile(stmt);
+        result(i, k) = B(i, j) * C(j, k);
+        result.compile(stmt);
         printToCout(stmt);
-        A.assemble();
+        result.assemble();
         timer.start();
-        A.compute();
+        result.compute();
         timer.stop();
 
         // bool correct = check_correctness(A);
@@ -559,6 +569,11 @@ public:
             default_compute_time = timer.getResult().mean;
         }
         timer.clear_cache();
+    }
+
+    taco::Tensor<double> get_A() {
+        taco::Tensor<double> result({NUM_I, NUM_K}, taco::dense);
+        return result;
     }
 
     taco::Tensor<double> get_B() { return B; }
