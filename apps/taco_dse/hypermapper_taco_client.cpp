@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <functional>
+#include <unordered_map>
 
 #include "taco/tensor.h"
 #include "taco/index_notation/index_notation.h"
@@ -748,15 +749,16 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
     // Taco requires you to start with running the deafult
     std::vector<int> tmp_loop_ordering = default_ordering;
-    int tmp_chunk_size = 16;
-    int tmp_unroll_factor = 8;
-    sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
-    compute_times = vector<double>();
-    for(int i = 0; i < num_reps; i++) {
-      sddmm_handler->compute(true);
-      compute_times.push_back(sddmm_handler->get_compute_time());
-    }
-    default_config_time = median(compute_times);
+    // int tmp_chunk_size = 16;
+    // int tmp_unroll_factor = 8;
+    // taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
+    // sddmm_handler->generate_schedule(temp_result, tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+    // compute_times = vector<double>();
+    // for(int i = 0; i < num_reps; i++) {
+    //   sddmm_handler->compute(temp_result, true);
+    //   compute_times.push_back(sddmm_handler->get_compute_time());
+    // }
+    // default_config_time = median(compute_times);
   }
 
   std::string test_name = "SDDMM";
@@ -771,6 +773,7 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
 
   int permutation_idx = 0;
+  std::vector<bool> valid(120, true);
   for (int omp_chunk_size_idx = 0; omp_chunk_size_idx < 7; omp_chunk_size_idx++) {
     int omp_chunk_size = ompChunkSizeValues[omp_chunk_size_idx];
     cout << chunk_size << endl;
@@ -784,12 +787,21 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
       }
       cout << endl;
       for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
-        sddmm_handler->generate_schedule(chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
+        taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
+        sddmm_handler->set_cold_run();
+        sddmm_handler->generate_schedule(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
 
         double total_time = 0.0;
         for(int i = 0; i < num_reps; i++) {
-          sddmm_handler->compute(false);
-          total_time += sddmm_handler->get_compute_time();
+          try {
+            sddmm_handler->compute(temp_result, false);
+            total_time += sddmm_handler->get_compute_time();
+          } catch(const taco::TacoException& err) {
+            std::cout << "Exception found" << std::endl;
+            total_time = 0.0;
+            valid[permutation_idx] = false;
+            break;
+          }
         }
 
         double compute_time = total_time / num_reps;
@@ -811,6 +823,37 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
     cout << endl;
     permutation_idx ++;
   } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
+}
+
+bool validate_ordering(std::vector<int> order) {
+  std::unordered_map<int, int> dict;
+  for(int i = 0; i < order.size(); i++) {
+    dict[order[i]] = i;
+    if(order[i] == 0 || order[i] == 1) {
+      if(dict.find(3) != dict.end()) {
+        return false;
+      }
+    }
+    if(order[i] == 3) {
+      if(dict.size() == 1) {
+        return false;
+      }
+      if(dict.find(2) != dict.end() && dict.find(4) != dict.end()) {
+        return false;
+      }
+    }
+    if(order[i] == 0) {
+      if(dict.find(2) != dict.end()) {
+        return false;
+      }
+    } 
+    if(order[i] == 1) {
+      if(dict.find(2) != dict.end()) {
+        return false;
+      }
+    } 
+  }
+  return true;
 }
 
 void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
@@ -851,7 +894,7 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   }
 
   std::string test_name = "SpMM";
-  std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512};
+  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512};
   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
   std::vector<int> ompSchedulingType{0, 1};
   std::vector<int> ompChunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
@@ -879,22 +922,30 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
         cout << l << " ";
       }
       cout << endl;
+      if(!validate_ordering(loop_ordering)) {
+        std::cout << "Invalid loop ordering" << std::endl;
+        continue;
+      }
       for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
         taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
         spmm_handler->generate_schedule(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
+        spmm_handler->set_cold_run();
 
         double total_time = 0.0;
         for(int i = 0; i < num_reps; i++) {
           try {
             spmm_handler->compute(temp_result, false);
             total_time += spmm_handler->get_compute_time();
+          // } catch (const std::runtime_error& err) {
           } catch (const taco::TacoException& err) {
             std::cout << "Exception found" << std::endl;
+            // std::cout << err << std::endl;
             total_time = 0.0;
             valid[permutation_idx] = false;
             break;
           }
         }
+        // exit(1);
 
         double compute_time = total_time / num_reps;
         obj_values[permutation_idx][omp_chunk_size_idx][omp_scheduling_type] = compute_time;
@@ -907,6 +958,9 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   permutation_idx = 0;
 
   do {
+    if(!validate_ordering(loop_ordering2)) {
+        continue;
+    }
     for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
       for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
         cout << obj_values[permutation_idx][chunkSize_idx][omp_scheduling_type] << " ";
@@ -920,6 +974,9 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
   permutation_idx = 0;
 
   do {
+    if(!validate_ordering(loop_ordering3)) {
+        continue;
+    }
     for(auto elems : loop_ordering3) {
       std::cout << elems << " ";
     }
@@ -1063,6 +1120,7 @@ int main(int argc, char **argv) {
 
   if (exh_search) {
     spmmExhaustiveSearch(matrix_name, logger);
+    // sddmmExhaustiveSearch(matrix_name, logger);
     // SpMMVarianceTest(logger);
     exit(1);
   }
