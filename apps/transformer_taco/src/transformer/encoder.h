@@ -2,6 +2,7 @@
 #define TRANSFORMER_ENCODER_H
 
 #include "common.h"
+#include "layer.h"
 
 // using namespace taco;
 

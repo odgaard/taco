@@ -11,13 +11,15 @@ class Layer {
 public:
     Layer() {}
     Layer(const std::string& name) : _name(name) {}
+    virtual ~Layer() {}
     virtual void forward(taco::Tensor<T> &output, const taco::Tensor<T> &input) = 0;
 
     friend std::ostream& operator<<(std::ostream &out, const Layer &layer) {
-        return out << "Layer: " << layer.get_name() << std::endl;
+        // return out << "Layer: " << layer.get_name() << std::endl;
+        return out << "";
     }
 
-    virtual std::string get_name() { return _name; }
+    std::string get_name() { return _name; }
 
 private:
     // TODO: Add metadata info for verbose printing of Layer
