@@ -534,11 +534,11 @@ public:
     void generate_schedule(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type, int omp_chunk_size, int num_threads) {
         result(i, k) = B(i, j) * C(j, k);
 
-        taco::taco_set_num_threads(num_threads);
+        // taco::taco_set_num_threads(num_threads);
         stmt = result.getAssignment().concretize();
         // std::vector<int> order_{0,1,2,3,4};
         // stmt = schedule(order_, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
-        stmt = schedule(order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
+        stmt = schedule(order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
         // std::cout << stmt << std::endl;
     }
 
@@ -556,17 +556,12 @@ public:
         if(cold_run) {
             // std::cout << "Computing cold run" << std::endl;
 
-            for(int i = 0; i < 3; i++) 
+            for(int i = 0; i < 1; i++) 
                 compute_cold_run(result);
-            // taco::Tensor<double> expected_(A.getDimensions(), A.getFormat());
-            // expected = expected_;
-            // expected(i, k) = B(i, j) * C(j, k);
-            // expected.compile();
-            // expected.assemble();
-            // expected.compute();
             cold_run = false;
         }
         taco::util::Timer timer;
+        timer.clear_cache();
 
         result(i, k) = B(i, j) * C(j, k);
         result.compile(stmt);
@@ -713,7 +708,7 @@ public:
         C.pack();
         D.pack();
 
-        A(i,j) = B(i,j) * C(i,k) * D(k,j);
+        // A(i,j) = B(i,j) * C(i,k) * D(k,j);
 
         cout << "Matrix dimensions" << endl;
         cout << "A: [" << A.getDimensions()[0] << "," << A.getDimensions()[1] << "]" << endl;
@@ -737,6 +732,7 @@ public:
     }
 
     void compute_cold_run(taco::Tensor<double> &result) {
+        A(i,j) = B(i,j) * C(i,k) * D(k,j);
         result.compile(stmt);
         result.assemble();
         result.compute();
@@ -864,10 +860,7 @@ public:
             }
             cold_run = false;
         }
-
         taco::util::Timer timer;
-
-        // A(i,k) = B(i,k) * C(i,j) * D(j,k);
         result(i,j) = B(i,j) * C(i,k) * D(k,j);
         result.compile(stmt);
         result.assemble();
@@ -879,7 +872,7 @@ public:
         {
             default_compute_time = timer.getResult().mean;
         }
-        timer.clear_cache();
+        // timer.clear_cache();
     }
 
 };

@@ -38,6 +38,11 @@ typedef std::chrono::time_point<std::chrono::steady_clock> TimePoint;
 /// statistics such as mean and median from the calls.
 class Timer {
 public:
+
+  ~Timer() {
+    if(dummyA){ free(dummyA); }
+    if(dummyB){ free(dummyB); }
+  }
   void start() {
     begin = std::chrono::steady_clock::now();
   }

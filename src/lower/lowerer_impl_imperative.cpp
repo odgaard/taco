@@ -2811,6 +2811,7 @@ ir::Stmt LowererImplImperative::finalizeResultArrays(std::vector<Access> writes)
       // Allocate memory for values array after assembly if not also computing
       Expr tensor = getTensorVar(write.getTensorVar());
       Expr valuesArr = GetProperty::make(tensor, TensorProperty::Values);
+      result.push_back(IfThenElse::make(valuesArr, Free::make(valuesArr)));
       result.push_back(Allocate::make(valuesArr, parentSize, false /* is_realloc */, Expr() /* old_elements */,
                                       clearValuesAllocation));
     }
