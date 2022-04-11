@@ -828,21 +828,23 @@ public:
 
     void compute(bool default_config = false) 
     {
-        if(cold_run) {
-            for(int i = 0; i < 5; i++) {
-                compute_cold_run();
-            }
-            cold_run = false;
-        }
+        // if(cold_run) {
+        //     for(int i = 0; i < 5; i++) {
+        //         compute_cold_run();
+        //     }
+        //     cold_run = false;
+        // }
 
         taco::util::Timer timer;
 
+        taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
+
         // A(i,k) = B(i,k) * C(i,j) * D(j,k);
-        A(i,j) = B(i,j) * C(i,k) * D(k,j);
-        A.compile(stmt);
-        A.assemble();
+        result(i,j) = B(i,j) * C(i,k) * D(k,j);
+        result.compile(stmt);
+        result.assemble();
         timer.start();
-        A.compute();
+        result.compute();
         timer.stop();
         compute_time = timer.getResult().mean;
         if (default_config)
@@ -854,19 +856,21 @@ public:
 
     void compute(taco::Tensor<double>& result, bool default_config = false) 
     {
-        if(cold_run) {
-            for(int i = 0; i < 5; i++) {
-                compute_cold_run(result);
-            }
-            cold_run = false;
-        }
+        // if(cold_run) {
+        //     for(int i = 0; i < 5; i++) {
+        //         compute_cold_run(result);
+        //     }
+        //     cold_run = false;
+        // }
         taco::util::Timer timer;
+        // timer.clear_cache();
         result(i,j) = B(i,j) * C(i,k) * D(k,j);
         result.compile(stmt);
         result.assemble();
         timer.start();
         result.compute();
         timer.stop();
+        result.pack();
         compute_time = timer.getResult().mean;
         if (default_config)
         {

@@ -805,6 +805,7 @@ void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
             total_time += sddmm_handler->get_compute_time();
           } catch(const taco::TacoException& err) {
             std::cout << "Exception found" << std::endl;
+            throw(err);
             total_time = 0.0;
             valid[permutation_idx] = false;
             break;
