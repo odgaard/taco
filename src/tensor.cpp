@@ -57,23 +57,31 @@ TensorBase::TensorBase(Datatype ctype)
 }
 
 TensorBase::TensorBase(std::string name, Datatype ctype)
-    : TensorBase(name, ctype, {}, Format())  {
+    : TensorBase(name, ctype, {}, Format(), Literal::zero(ctype))  {
 }
 
-TensorBase::TensorBase(Datatype ctype, vector<int> dimensions,
-                       ModeFormat modeType)
-    : TensorBase(util::uniqueName('A'), ctype, dimensions,
-                 std::vector<ModeFormatPack>(dimensions.size(), modeType)) {
+TensorBase::TensorBase(Datatype ctype, vector<int> dimensions, 
+                       ModeFormat modeType, Literal fill)
+    : TensorBase(util::uniqueName('A'), ctype, dimensions, 
+                 std::vector<ModeFormatPack>(dimensions.size(), modeType), fill) {
 }
 
-TensorBase::TensorBase(Datatype ctype, vector<int> dimensions, Format format)
-    : TensorBase(util::uniqueName('A'), ctype, dimensions, format) {
+TensorBase::TensorBase(Datatype ctype, vector<int> dimensions, Format format, Literal fill)
+    : TensorBase(util::uniqueName('A'), ctype, dimensions, format, fill) {
 }
 
-TensorBase::TensorBase(std::string name, Datatype ctype,
-                       std::vector<int> dimensions, ModeFormat modeType)
-    : TensorBase(name, ctype, dimensions,
-                 std::vector<ModeFormatPack>(dimensions.size(), modeType)) {
+TensorBase::TensorBase(std::string name, Datatype ctype, 
+                       std::vector<int> dimensions, ModeFormat modeType, Literal fill)
+    : TensorBase(name, ctype, dimensions, 
+                 std::vector<ModeFormatPack>(dimensions.size(), modeType), fill) {
+}
+
+TensorBase::TensorBase(Datatype ctype, std::vector<int> dimensions, Literal fill)
+    : TensorBase(ctype, dimensions, ModeFormat::compressed, fill) {
+}
+
+TensorBase::TensorBase(std::string name, Datatype ctype, std::vector<int> dimensions, Literal fill)
+    : TensorBase(name, ctype, dimensions, ModeFormat::compressed, fill) {
 }
 
 static Format initFormat(Format format) {
@@ -102,11 +110,18 @@ static Format initFormat(Format format) {
 }
 
 TensorBase::TensorBase(string name, Datatype ctype, vector<int> dimensions,
-                       Format format)
-    : content(new Content(name, ctype, dimensions, initFormat(format))) {
+                       Format format, Literal fill) {
+
+  // Default fill to zero since undefined. This is done since we need the ctype to initialize the
+  // fill and we can't use this inside the default arguments.
+  fill = fill.defined()? fill : Literal::zero(ctype);
+  content = shared_ptr<Content>(new Content(name, ctype, dimensions, initFormat(format), fill));
+
   taco_uassert((size_t)format.getOrder() == dimensions.size()) <<
       "The number of format mode types (" << format.getOrder() << ") " <<
       "must match the tensor order (" << dimensions.size() << ").";
+
+  taco_uassert(ctype == fill.getDataType()) << "Fill value must be of the same type as the tensor.";
 
   content->allocSize = 1 << 20;
 
@@ -357,12 +372,15 @@ void TensorBase::pack() {
     std::vector<int> bufferDim = {1};
     std::vector<int> bufferModeOrdering = {0};
     std::vector<int> bufferCoords(numCoordinates, 0);
+
+    void* fillPtr = getStorage().getFillValue().defined()? getStorage().getFillValue().getValPtr() : nullptr;
     taco_tensor_t* bufferStorage = init_taco_tensor_t(1, csize,
         (int32_t*)bufferDim.data(), (int32_t*)bufferModeOrdering.data(),
-        (taco_mode_t*)bufferModeType.data());
+        (taco_mode_t*)bufferModeType.data(), fillPtr);
     std::vector<int> pos = {0, (int)numCoordinates};
     bufferStorage->indices[0][0] = (uint8_t*)pos.data();
     bufferStorage->indices[0][1] = (uint8_t*)bufferCoords.data();
+
     bufferStorage->vals = (uint8_t*)content->coordinateBuffer->data();
 
     std::vector<void*> arguments = {content->storage, bufferStorage};
@@ -423,11 +441,11 @@ void TensorBase::pack() {
   content->coordinateBuffer->clear();
   content->coordinateBufferUsed = 0;
 
-
+  void* fillPtr = getStorage().getFillValue().defined()? getStorage().getFillValue().getValPtr() : nullptr;
   std::vector<taco_mode_t> bufferModeTypes(order, taco_mode_sparse);
   taco_tensor_t* bufferStorage = init_taco_tensor_t(order, csize,
       (int32_t*)dimensions.data(), (int32_t*)permutation.data(),
-      (taco_mode_t*)bufferModeTypes.data());
+      (taco_mode_t*)bufferModeTypes.data(), fillPtr);
   std::vector<int> pos = {0, (int)numCoordinates};
   bufferStorage->indices[0][0] = (uint8_t*)pos.data();
   for (int i = 0; i < order; ++i) {
@@ -458,10 +476,10 @@ static inline map<TensorVar, TensorBase> getTensors(const IndexExpr& expr);
 struct AccessTensorNode : public AccessNode {
   AccessTensorNode(TensorBase tensor, const std::vector<IndexVar>& indices)
       :  AccessNode(tensor.getTensorVar(), indices, {}, false), 
-         tensor(tensor) {}
+         tensorPtr(tensor.content) {}
 
   AccessTensorNode(TensorBase tensor, const std::vector<std::shared_ptr<IndexVarInterface>>& indices)
-    : AccessNode(tensor.getTensorVar()), tensor(tensor) {
+    : AccessNode(tensor.getTensorVar()), tensorPtr(tensor.content) {
     // Create the vector of IndexVar to assign to this->indexVars.
     std::vector<IndexVar> ivars(indices.size());
     for (size_t i = 0; i < indices.size(); i++) {
@@ -499,10 +517,21 @@ struct AccessTensorNode : public AccessNode {
     this->indexVars = std::move(ivars);
   }
 
-  TensorBase tensor;
-  virtual void setAssignment(const Assignment& assignment) {
-    tensor.syncDependentTensors();
+  // We hold a weak_ptr to the accessed TensorBase to avoid creating a reference
+  // cycle between the accessed TensorBase and this AccessTensorNode, since the
+  // TensorBase will store the AccessTensorNode (as part of an IndexExpr) as a
+  // field on itself. Not using a weak pointer results in leaking TensorBases.
+  std::weak_ptr<TensorBase::Content> tensorPtr;
+  TensorBase getTensor() const {
+    TensorBase tensor;
+    tensor.content = tensorPtr.lock();
+    return tensor;
+  }
 
+  virtual void setAssignment(const Assignment& assignment) {
+    auto tensor = this->getTensor();
+
+    tensor.syncDependentTensors();
     Assignment assign = makeReductionNotation(assignment);
 
     tensor.setNeedsPack(false);
@@ -622,6 +651,7 @@ void TensorBase::compile() {
   stmt = parallelizeOuterLoop(stmt);
   compile(stmt, content->assembleWhileCompute);
 }
+
 void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   if (!needsCompile()) {
     return;
@@ -656,6 +686,11 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
 
 taco_tensor_t* TensorBase::getTacoTensorT() {
   return getStorage();
+}
+
+
+Literal TensorBase::getFillValue() const {
+  return content->tensorVar.getFill();
 }
 
 void TensorBase::syncValues() {
@@ -727,7 +762,7 @@ static inline map<TensorVar, TensorBase> getTensors(const IndexExpr& expr) {
       taco_iassert(isa<AccessTensorNode>(node)) << "Unknown subexpression";
 
       if (!util::contains(arguments, node->tensorVar)) {
-        arguments.insert({node->tensorVar, to<AccessTensorNode>(node)->tensor});
+        arguments.insert({node->tensorVar, to<AccessTensorNode>(node)->getTensor()});
       }
 
       // Also add any tensors backing index sets of tensor accesses.
@@ -739,7 +774,7 @@ static inline map<TensorVar, TensorBase> getTensors(const IndexExpr& expr) {
       }
 
       // TODO (rohany): This seems like dead code.
-      TensorBase tensor = to<AccessTensorNode>(node)->tensor;
+      TensorBase tensor = to<AccessTensorNode>(node)->getTensor();
       if (!util::contains(inserted, tensor)) {
         inserted.insert(tensor);
         operands.push_back(tensor);
@@ -1065,6 +1100,11 @@ bool equalsTyped(const TensorBase& a, const TensorBase& b) {
 bool equals(const TensorBase& a, const TensorBase& b) {
   // Component type must be the same
   if (a.getComponentType() != b.getComponentType()) {
+    return false;
+  }
+
+  // Fill values must be the same
+  if (!equals(a.getFillValue(), b.getFillValue())) {
     return false;
   }
 
