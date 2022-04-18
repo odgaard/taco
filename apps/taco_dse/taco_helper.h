@@ -944,21 +944,38 @@ public:
     void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false) {
         result(i, j) = B(i, j) * C(i, k) * D(k, j);
 
+        // std::cout << "Elements: " << std::endl;
+        // for(auto elem : order) {
+        //     std::cout << elem << " ";
+        // }
+        // std::cout << std::endl;
+
         taco::IndexStmt sched = result.getAssignment().concretize();
         sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
 
-        // if(cold_run) {
-        //     for(int i = 0; i < 5; i++) {
-        //         compute_cold_run(result, sched);
-        //     }
-        //     cold_run = false;
-        // }
+        if(cold_run) {
+            for(int i = 0; i < 5; i++) {
+                // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
+                compute_cold_run(result, sched);
+            }
+            cold_run = false;
+        }
+
 
         taco::util::Timer timer;
         result.compile(sched);
+        
         result.assemble();
         timer.start();
         result.compute();
+        // if(cold_run && order == temp_order) {
+        //     std::cout << result.getSource() << std::endl;
+        //     std::cout << sched << std::endl;
+        //     cold_run = false;
+        //     if(order == std::vector<int>{0,2,3,1,4}) {
+        //         exit(0);
+        //     }
+        // }
         timer.stop();
         compute_time = timer.getResult().mean;
         if(default_config) {
@@ -987,6 +1004,7 @@ public:
         timer.start();
         result.compute();
         timer.stop();
+        std::cout << result.getSource() << std::endl;
         compute_time = timer.getResult().mean;
         if (default_config)
         {
@@ -1007,6 +1025,7 @@ public:
         // timer.clear_cache();
         result(i,j) = B(i,j) * C(i,k) * D(k,j);
         result.compile(stmt);
+        std::cout << result.getSource() << std::endl;
         result.assemble();
         timer.start();
         result.compute();
