@@ -120,12 +120,14 @@ struct UfuncInputCache {
     }
 
     // Otherwise, we missed the cache. Load in the target tensor and process it.
-    // std::cout << path << std::endl;
+    std::cout << "Path:" << path << std::endl;
     this->lastLoaded = taco::read(path, format);
+    this->lastLoaded.setName("loaded");
     // We assign lastPath after lastLoaded so that if taco::read throws an exception
     // then lastPath isn't updated to the new path.
     this->lastPath = path;
     this->inputTensor = lastLoaded;
+    this->inputTensor.setName("loaded");
 
     this->num_i = this->inputTensor.getDimensions()[0];
     this->num_j = this->inputTensor.getDimensions()[1];
@@ -586,7 +588,7 @@ public:
         result(i, k) = B(i, j) * C(j, k);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
-        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
+        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
 
         if(cold_run) {
             for(int i = 0; i < 5; i++) {
@@ -703,6 +705,7 @@ public:
     taco::IndexVar i0, i1, jpos, jpos0, jpos1;
     int run_mode;
     float get_sparsity() { return (run_mode == 0) ? SPARSITY : inputCache.get_sparsity(); }
+    int get_num_i() { return NUM_I; }
     int get_num_j() { return NUM_J; }
     SDDMM(int mode, int NUM_I = 10000, int NUM_J = 10000, int NUM_K = 1000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                                          NUM_J{NUM_J},
@@ -837,8 +840,6 @@ public:
         return stmt.split(i, i0, i1, chunk_size)
                 .pos(j, jpos, B(i,j))
                 .split(jpos, jpos0, jpos1, unroll_factor)
-                // .pos(k, kpos, B(i,j))
-                // .split(kpos, kpos0, kpos1, UNROLL_FACTOR)
                 .reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
                 .parallelize(jpos1, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
@@ -952,6 +953,7 @@ public:
 
         taco::IndexStmt sched = result.getAssignment().concretize();
         sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size);
+        B.setName("loadedMat");
 
         if(cold_run) {
             for(int i = 0; i < 5; i++) {
@@ -968,7 +970,7 @@ public:
         result.assemble();
         timer.start();
         result.compute();
-        // if(cold_run && order == temp_order) {
+        // if(cold_run && order == std::vector<int>{0,2,3,1,4}) {
         //     std::cout << result.getSource() << std::endl;
         //     std::cout << sched << std::endl;
         //     cold_run = false;

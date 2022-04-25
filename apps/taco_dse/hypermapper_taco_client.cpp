@@ -46,6 +46,7 @@ float default_config_time = 0.0f;
 float no_sched_time = 0.0f;
 int num_loops = 0;
 float sparsity = 0.0f;
+int num_i = 0;
 int num_j = 0;
 std::string op;
 int num_reps;
@@ -161,6 +162,15 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   else {
     HMScenario["optimization_iterations"] = 0;
   }
+
+  json HMDOE;
+  HMDOE["doe_type"] = "random sampling";
+  HMDOE["number_of_samples"] = NumDSERandomSamples;
+  if(optimization == "random_sampling") {
+    HMDOE["number_of_samples"] = NumDSERandomSamples + NumIterations;
+  }
+
+  HMScenario["design_of_experiment"] = HMDOE;
 
   HMScenario["output_data_file"] =
       OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
@@ -581,10 +591,8 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   compute_times = std::vector<double>();
   spmm_handler->set_cold_run();
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
-  spmm_handler->generate_schedule(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads);
   for(int i = 0; i < num_reps; i++) {
-    // spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
-    spmm_handler->compute(temp_result, false);
+    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
     compute_times.push_back(spmm_handler->get_compute_time());
     // std::cout << spmm_handler->get_compute_time() << std::endl;
   }
@@ -634,7 +642,12 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     sddmm_handler->initialize_data(1);
     initialized = true;
     sparsity = sddmm_handler->get_sparsity();
+    num_i = sddmm_handler->get_num_i();
     num_j = sddmm_handler->get_num_j();
+    // Added for filtering vectors out from suitesparse
+    if(num_j == 1 || num_i == 1) {
+      exit(1);
+    }
     op = "SDDMM";
 
     // Taco requires you to start with running the deafult
@@ -1311,7 +1324,7 @@ int main(int argc, char **argv) {
     .required();
   program.add_argument("-n", "--num_reps")
     .help("Number of compute repetitions")
-    .default_value(5)
+    .default_value(20)
     .scan<'i', int>()
     .required();
   program.add_argument("-mat", "--matrix_name")
@@ -1358,19 +1371,22 @@ int main(int argc, char **argv) {
 
   // Set these values accordingly
 
+  std::cout << "Matrix: " << matrix_name << std::endl;
+
   std::string OutputFoldername;
+  std::string ExperimentFolder = "experiments";
   if (matrix_name == "auto") {
-    OutputFoldername = "outdata_" + test_name;
+    OutputFoldername = ExperimentFolder + "/outdata_" + test_name + "/" + optimization;
   } else {
     // remove the file-ending of the matrix name add it to the output folder name
     size_t lastindex = matrix_name.find_last_of(".");
     string rawname = matrix_name.substr(0, lastindex);
-    OutputFoldername = "outdata_" + test_name + "_" + rawname;
+    OutputFoldername = ExperimentFolder + "/outdata_" + test_name + "_" + rawname + "/" + optimization;
   }
   std::string AppName = "cpp_taco_" + test_name;
-  int dimensionality_plus_one = 4;
+  int dimensionality_plus_one = 7;
   int NumSamples = dimensionality_plus_one;
-  int NumIterations = 70;
+  int NumIterations = 100;
   std::vector<std::string> Objectives = {"compute_time"};
 
   // Create output directory if it doesn't exist
@@ -1378,10 +1394,28 @@ int main(int argc, char **argv) {
   std::string OutputDir = CurrentDir + "/" + OutputFoldername + "/";
   if (fs::exists(OutputDir)) {
     std::cerr << "Output directory exists, continuing!" << std::endl;
+    // Exit gracefully if folder already exists with csv files
+    // TODO: Remove if not using slurm
+    // exit(1);
+    std::string csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
+    std::string png_file = OutputFoldername + "/" + test_name + "_plot.png";
+    if(fs::exists(csv_file) && !fs::exists(png_file)) {
+      std::cerr << "CSV file exists, exiting";
+      exit(1);
+    }
+    std::string last_csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + "9" + "_output_data.csv";
+    if(fs::exists(csv_file) && !fs::exists(last_csv_file) && fs::exists(png_file)) {
+      std::cerr << "CSV file and png file exists, exiting";
+      exit(0);
+    }
+    if(fs::exists(csv_file) && fs::exists(last_csv_file) && fs::exists(png_file)) {
+      std::cerr << "All CSV files and png file exists, exiting";
+      exit(1);
+    }
   } else {
 
     std::cerr << "Output directory does not exist, creating!" << std::endl;
-    if (!fs::create_directory(OutputDir)) {
+    if (!fs::create_directories(OutputDir)) {
       fatalError("Unable to create Directory: " + OutputDir);
     }
   }
@@ -1509,9 +1543,9 @@ int main(int argc, char **argv) {
   cmdPareto += getenv("HYPERMAPPER_HOME");
   cmdPareto += "/scripts/plot_optimization_results.py -j";
   cmdPareto += " " + JSonFileNameStr;
-  cmdPareto += " -i " + OutputFoldername + " -o " + test_name + "_plot.png";
+  cmdPareto += " -i " + OutputFoldername + " -o " + OutputFoldername + "/" + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
-  cmdPareto += " -t '" + op + " " + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
+  cmdPareto += " -t '" + op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
   cmdPareto += " -doe ";
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
