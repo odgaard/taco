@@ -567,24 +567,17 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
+    num_i = spmm_handler->get_num_i();
     num_j = spmm_handler->get_num_j();
     op = "SpMM";
 
-    // Taco requires you to start with running the deafult
-    // std::vector<int> tmp_loop_ordering = default_ordering;
-    // int tmp_chunk_size = 16;
-    // int tmp_unroll_factor = 8;
-    // int tmp_omp_scheduling_type = 0;
-    // int tmp_omp_chunk_size = 1;
-    // int tmp_num_threads = 32;
-
-    // spmm_handler->generate_schedule(temp_result, tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering, tmp_omp_scheduling_type, tmp_omp_chunk_size, tmp_num_threads);
-    // compute_times = vector<double>();
-    // for(int i = 0; i < num_reps; i++) {
-    //   spmm_handler->compute(temp_result, true);
-    //   compute_times.push_back(spmm_handler->get_compute_time());
-    // }
-    // default_config_time = median(compute_times);
+    compute_times = vector<double>();
+    for(int i = 0; i < 5; i++) {
+      double timer = 0.0;
+      timer = spmm_handler->compute_unscheduled();
+      compute_times.push_back(timer);
+    }
+    no_sched_time = median(compute_times);
   }
 
 
@@ -655,12 +648,13 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     int tmp_chunk_size = 16;
     int tmp_unroll_factor = 8;
     // sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
-    // compute_times = vector<double>();
-    // for(int i = 0; i < num_reps; i++) {
-    //   sddmm_handler->compute(true);
-    //   compute_times.push_back(sddmm_handler->get_compute_time());
-    // }
-    // default_config_time = median(compute_times);
+    compute_times = vector<double>();
+    for(int i = 0; i < 5; i++) {
+      double timer = 0.0;
+      timer = sddmm_handler->compute_unscheduled();
+      compute_times.push_back(timer);
+    }
+    no_sched_time = median(compute_times);
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
@@ -677,11 +671,17 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
       break;
     }
     compute_times.push_back(sddmm_handler->get_compute_time());
+    // Capping compute times for really expensive runs
+    if(sddmm_handler->get_compute_time() > 5000) {
+      break;
+    }
   }
   sddmm_handler->set_cold_run();
 
   if(default_config_time == 0.0f) {
     default_config_time = median(compute_times);
+    std::cout << sddmm_handler->get_num_i() << "," << sddmm_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
+    logger << sddmm_handler->get_num_i() << "," << sddmm_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
   }
   Obj.compute_time = median(compute_times);
   return Obj;
@@ -698,10 +698,36 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   int NUM_J = 10000;
   int NUM_K = 1000;
 
+  std::vector<double> compute_times;
+
   if(!initialized) {
     ttv_handler = new TTV(NUM_I, NUM_J, NUM_K);
     ttv_handler->initialize_data();
     initialized = true;
+  }
+  if(!initialized) {
+    cout << "INITIALIZING" << endl;
+    // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
+    ttv_handler = new TTV();
+    ttv_handler->matrix_name = matrix_name;
+    ttv_handler->initialize_data(1);
+    initialized = true;
+    sparsity = ttv_handler->get_sparsity();
+    num_i = ttv_handler->get_num_i();
+    num_j = ttv_handler->get_num_j();
+    // Added for filtering vectors out from suitesparse
+    if(num_j == 1 || num_i == 1) {
+      exit(1);
+    }
+    op = "TTV";
+
+    compute_times = vector<double>();
+    for(int i = 0; i < 5; i++) {
+      double timer = 0.0;
+      timer = ttv_handler->compute_unscheduled();
+      compute_times.push_back(timer);
+    }
+    no_sched_time = median(compute_times);
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
@@ -1296,22 +1322,71 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 // }
 
 
+int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, int omp_scheduling_type, int omp_chunk_size, int omp_num_threads=32) {
+  using namespace taco;
+
+  std::vector<int> default_ordering{0,1,2,3,4};
+  // int NUM_I = 67173;
+  // int NUM_J = 67173;
+  int NUM_K = 256;
+  // float _sparsity = .982356;
+  std::vector<double> compute_times;
+
+  if(!initialized) {
+    cout << "INITIALIZING" << endl;
+    spmm_handler = new SpMM();
+    spmm_handler->matrix_name = matrix_name;
+    spmm_handler->NUM_K = NUM_K;
+    spmm_handler->initialize_data(1);
+    // result = spmm_handler->get_A();
+    taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
+    initialized = true;
+    sparsity = spmm_handler->get_sparsity();
+    num_j = spmm_handler->get_num_j();
+    op = "SpMM";
+  }
+
+
+  compute_times = std::vector<double>();
+  spmm_handler->set_cold_run();
+  taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
+  for(int i = 0; i < 5; i++) {
+    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, default_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+    compute_times.push_back(spmm_handler->get_compute_time());
+    // std::cout << spmm_handler->get_compute_time() << std::endl;
+  }
+
+  double compute_time = median(compute_times);
+  
+  std::cout << "Compute time: " << compute_time << std::endl;
+  return 0;
+}
+
+
 int main(int argc, char **argv) {
 
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
     ErrMsg += "Please set HYPERMAPPER_HOME before running this ";
-    setenv("HYPERMAPPER_HOME", "/home/rubensl/hypermapper_dev", true);
+    setenv("HYPERMAPPER_HOME", "/home/ubuntu/hypermapper_dev", true);
     printf("Setting HM variable\n");
     // fatalError(ErrMsg);
   }
 
-  taco::taco_set_num_threads(32);
+  // taco::taco_set_num_threads(32);
 
   argparse::ArgumentParser program("./bin/taco-taco_dse");
 
   program.add_argument("-e", "--exhaustive")
     .help("Run exhaustive search")
+    .default_value(false)
+    .implicit_value(true);
+  program.add_argument("-d", "--dynamic")
+    .help("Set omp scheduling to dynamic")
+    .default_value(false)
+    .implicit_value(true);
+  program.add_argument("-s", "--single_run")
+    .help("Run single run of SPMM")
     .default_value(false)
     .implicit_value(true);
   program.add_argument("-o", "--op")
@@ -1325,6 +1400,11 @@ int main(int argc, char **argv) {
   program.add_argument("-n", "--num_reps")
     .help("Number of compute repetitions")
     .default_value(20)
+    .scan<'i', int>()
+    .required();
+  program.add_argument("-chunk", "--omp_chunk_size")
+    .help("Omp chunk size")
+    .default_value(1)
     .scan<'i', int>()
     .required();
   program.add_argument("-mat", "--matrix_name")
@@ -1345,28 +1425,41 @@ int main(int argc, char **argv) {
 
   // std::string test_name = "SpMM";
   std::string test_name, optimization, matrix_name, count;
-  bool exh_search;
+  bool exh_search, single_run, dynamic;
   test_name = program.get<std::string>("--op");
   optimization = program.get<std::string>("--method");
   matrix_name = program.get<std::string>("--matrix_name");
   num_reps = program.get<int>("--num_reps");
   exh_search = program.get<bool>("--exhaustive");
+  single_run = program.get<bool>("--single_run");
+  dynamic = program.get<bool>("--dynamic");
   count = program.get<std::string>("--count");
+  int omp_chunk_size = program.get<int>("--omp_chunk_size");
 
-  std::string log_file = "hypermapper_taco_log.csv";
-  bool log_exists = fs::exists(log_file);
+  std::string log_file_ = "hypermapper_taco_log.csv";
+  bool log_exists = fs::exists(log_file_);
 
-  std::ofstream logger(log_file, std::ios_base::app);
+  std::ofstream logger_(log_file_, std::ios_base::app);
 
   if(!log_exists) {
-    logger << "Op,Size,Chunk size,Time" << std::endl;
+    logger_ << "Op,Size,Chunk size,Time" << std::endl;
   }
 
   if (exh_search) {
     // spmmExhaustiveSearch(matrix_name, logger);
-    sddmmExhaustiveSearch(matrix_name, logger);
+    sddmmExhaustiveSearch(matrix_name, logger_);
     // SpMMVarianceTest(logger);
-    exit(1);
+    exit(0);
+  }
+  if (single_run) {
+    // spmmExhaustiveSearch(matrix_name, logger);
+    int chunk_size = 16;
+    int unroll_factor = 8;
+    int omp_scheduling_type = dynamic ? 1 : 0;
+    int omp_num_threads = 32;
+    single_run_spmm(matrix_name, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_num_threads);
+    // SpMMVarianceTest(logger);
+    exit(0);
   }
 
   // Set these values accordingly
@@ -1374,6 +1467,7 @@ int main(int argc, char **argv) {
   std::cout << "Matrix: " << matrix_name << std::endl;
 
   std::string OutputFoldername;
+  std::string OutputFoldernameMat;
   std::string ExperimentFolder = "experiments";
   if (matrix_name == "auto") {
     OutputFoldername = ExperimentFolder + "/outdata_" + test_name + "/" + optimization;
@@ -1382,16 +1476,19 @@ int main(int argc, char **argv) {
     size_t lastindex = matrix_name.find_last_of(".");
     string rawname = matrix_name.substr(0, lastindex);
     OutputFoldername = ExperimentFolder + "/outdata_" + test_name + "_" + rawname + "/" + optimization;
+    OutputFoldernameMat = ExperimentFolder + "/outdata_" + test_name + "_" + rawname;
   }
   std::string AppName = "cpp_taco_" + test_name;
-  int dimensionality_plus_one = 7;
+  int dimensionality_plus_one = 11;
   int NumSamples = dimensionality_plus_one;
-  int NumIterations = 100;
+  int NumIterations = 110;
   std::vector<std::string> Objectives = {"compute_time"};
+
 
   // Create output directory if it doesn't exist
   std::string CurrentDir = fs::current_path();
   std::string OutputDir = CurrentDir + "/" + OutputFoldername + "/";
+  std::string MatOutputDir = CurrentDir + "/" + OutputFoldernameMat + "/";
   if (fs::exists(OutputDir)) {
     std::cerr << "Output directory exists, continuing!" << std::endl;
     // Exit gracefully if folder already exists with csv files
@@ -1399,25 +1496,36 @@ int main(int argc, char **argv) {
     // exit(1);
     std::string csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
     std::string png_file = OutputFoldername + "/" + test_name + "_plot.png";
-    if(fs::exists(csv_file) && !fs::exists(png_file)) {
+    if(fs::exists(csv_file)) {
       std::cerr << "CSV file exists, exiting";
-      exit(1);
-    }
-    std::string last_csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + "9" + "_output_data.csv";
-    if(fs::exists(csv_file) && !fs::exists(last_csv_file) && fs::exists(png_file)) {
-      std::cerr << "CSV file and png file exists, exiting";
       exit(0);
     }
-    if(fs::exists(csv_file) && fs::exists(last_csv_file) && fs::exists(png_file)) {
-      std::cerr << "All CSV files and png file exists, exiting";
-      exit(1);
-    }
+    // std::string last_csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + "9" + "_output_data.csv";
+    // if(fs::exists(csv_file) && !fs::exists(last_csv_file) && fs::exists(png_file)) {
+    //   std::cerr << "CSV file and png file exists, exiting";
+    //   exit(0);
+    // }
+    // if(fs::exists(csv_file) && fs::exists(last_csv_file) && fs::exists(png_file)) {
+    //   std::cerr << "All CSV files and png file exists, exiting";
+    //   exit(1);
+    // }
   } else {
 
     std::cerr << "Output directory does not exist, creating!" << std::endl;
     if (!fs::create_directories(OutputDir)) {
       fatalError("Unable to create Directory: " + OutputDir);
     }
+  }
+
+  std::string log_file = MatOutputDir + "times.csv";
+  std::string title_file = MatOutputDir + "title.txt";
+  std::cout << "writing to " << log_file << std::endl;
+  bool log_exists_ = fs::exists(log_file);
+
+  std::ofstream logger(log_file, std::ios_base::app);
+
+  if(!log_exists_) {
+    logger << "Num_I,Num_J,Default_Time,No_Sched_Time" << std::endl;
   }
 
   // Collect input parameters
@@ -1438,9 +1546,10 @@ int main(int argc, char **argv) {
                  NumSamples, InParams, Objectives, optimization, count);
 
   // Launch HyperMapper
-  std::string cmd("python3 ");
+  std::string cmd("python ");
   cmd += getenv("HYPERMAPPER_HOME");
   cmd += "/scripts/hypermapper.py";
+  // cmd += "/hypermapper/optimizer.py";
   cmd += " " + JSonFileNameStr;
 
   std::cout << "Executing command: " << cmd << std::endl;
@@ -1538,8 +1647,10 @@ int main(int argc, char **argv) {
 
   cout << JSonFileNameStr << endl;
 
+  std::ofstream logger_title(title_file, std::ios_base::app);
+
   FILE *fp;
-  std::string cmdPareto("python3 ");
+  std::string cmdPareto("python ");
   cmdPareto += getenv("HYPERMAPPER_HOME");
   cmdPareto += "/scripts/plot_optimization_results.py -j";
   cmdPareto += " " + JSonFileNameStr;
@@ -1547,6 +1658,9 @@ int main(int argc, char **argv) {
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
   cmdPareto += " -t '" + op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
   cmdPareto += " -doe ";
+
+  std::string title = op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
+  logger_title << title << std::endl;
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
   fp = popen(cmdPareto.c_str(), "r");
@@ -1554,7 +1668,9 @@ int main(int argc, char **argv) {
     printf("%s", buffer);
   pclose(fp);
 
+  logger_.close();
   logger.close();
+  logger_title.close();
 
   return 0;
 }
