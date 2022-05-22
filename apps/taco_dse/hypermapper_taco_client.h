@@ -298,6 +298,7 @@ public:
 // HyperMapper Objective object
 struct HMObjective {
   float compute_time;
+  bool valid;
 };
 
 #endif
