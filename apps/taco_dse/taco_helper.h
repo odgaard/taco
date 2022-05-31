@@ -712,7 +712,7 @@ public:
         }
         compute_time = med(compute_times);
 
-        timer.stop();
+        // timer.stop();
         // compute_time = timer.getResult().mean;
         if(default_config) {
             default_compute_time = timer.getResult().mean;

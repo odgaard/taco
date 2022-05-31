@@ -1643,6 +1643,7 @@ int main(int argc, char **argv) {
 
   std::string log_file = MatOutputDir + "times.csv";
   std::string title_file = MatOutputDir + "title.txt";
+  std::string stats_file = MatOutputDir + "stats.txt";
   std::cout << "writing to " << log_file << std::endl;
   bool log_exists_ = fs::exists(log_file);
 
@@ -1683,6 +1684,10 @@ int main(int argc, char **argv) {
   FILE *instream = fdopen(hypermapper.from_child, "r");
   FILE *outstream = fdopen(hypermapper.to_child, "w");
   cout << "opened hypermapper" << endl;
+
+  taco::util::Timer timer;
+
+  timer.start();
 
   // Loop that communicates with HyperMapper
   // Everything is done through function calls,
@@ -1771,6 +1776,7 @@ int main(int argc, char **argv) {
     fflush(outstream);
     i++;
   }
+  timer.stop();
   cout << "closing pipes" << endl;
   close(hypermapper.from_child);
   close(hypermapper.to_child);
@@ -1780,6 +1786,7 @@ int main(int argc, char **argv) {
   cout << JSonFileNameStr << endl;
 
   std::ofstream logger_title(title_file, std::ios_base::app);
+  std::ofstream stats_title(stats_file, std::ios_base::app);
 
   FILE *fp;
   std::string cmdPareto("python ");
@@ -1793,6 +1800,7 @@ int main(int argc, char **argv) {
 
   std::string title = op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
   logger_title << title << std::endl;
+  stats_title << optimization << "," << timer.getResult().mean << std::endl;
   // cmdPareto += " " + to_string(no_sched_time);
   std::cout << "Executing " << cmdPareto << std::endl;
   fp = popen(cmdPareto.c_str(), "r");
@@ -1803,6 +1811,7 @@ int main(int argc, char **argv) {
   logger_.close();
   logger.close();
   logger_title.close();
+  stats_title.close();
 
   return 0;
 }
