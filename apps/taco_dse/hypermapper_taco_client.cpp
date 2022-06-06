@@ -860,12 +860,13 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
     cout << "INITIALIZING" << endl;
     ttm_handler = new TTM();
     ttm_handler->matrix_name = matrix_name;
+    ttm_handler->NUM_L = 256;
     ttm_handler->initialize_data(1);
     initialized = true;
     // sparsity = ttv_handler->get_sparsity();
     num_i = ttm_handler->NUM_I;
     num_j = ttm_handler->NUM_J;
-    ttm_handler->NUM_L = 256;
+    //int num_l = ttm_handler->NUM_L;
     
     // Added for filtering vectors out from suitesparse
     op = "TTM";
@@ -883,7 +884,7 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
   bool default_config = (chunk_size == 16);
 
   compute_times = vector<double>();
-  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J}, taco::dense);
+  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, taco::dense);
 
   ttm_handler->schedule_and_compute(temp_result, chunk_size, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
 
@@ -1793,7 +1794,7 @@ int main(int argc, char **argv) {
   cmdPareto += getenv("HYPERMAPPER_HOME");
   cmdPareto += "/scripts/plot_optimization_results.py -j";
   cmdPareto += " " + JSonFileNameStr;
-  cmdPareto += " -i " + OutputFoldername + " -o " + OutputFoldername + "/" + test_name + "_plot.png";
+  cmdPareto += " -i " + OutputFoldername + " --plot_log -o " + OutputFoldername + "/" + test_name + "_plot.png";
   cmdPareto += " --expert_configuration " + to_string(default_config_time);
   cmdPareto += " -t '" + op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
   cmdPareto += " -doe ";

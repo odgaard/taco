@@ -1463,7 +1463,7 @@ public:
         NUM_J = inputCache.num_j;
         NUM_K = inputCache.num_k;
 
-        taco::Tensor<double> C_("C", {NUM_I, NUM_K}, {taco::ModeFormat::Dense, taco::ModeFormat::Dense});
+        taco::Tensor<double> C_("C", {NUM_K, NUM_L}, {taco::ModeFormat::Dense, taco::ModeFormat::Dense});
         C = C_;
         for (int k = 0; k < NUM_K; k++) {
             for (int l = 0; l < NUM_L; l++) {
@@ -1505,7 +1505,7 @@ public:
     }
 
     double compute_unscheduled() {
-        taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
+        taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, taco::dense);
         result(i,j,l) = B(i,j,k) * C(k,l);
         taco::util::Timer timer;
         result.compile();
@@ -1539,7 +1539,8 @@ public:
                 .parallelize(kpos2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+	taco::Tensor<double> result("result", {NUM_I, NUM_J, NUM_L}, taco::dense);
         result(i,j,l) = B(i,j,k) * C(k,l);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
