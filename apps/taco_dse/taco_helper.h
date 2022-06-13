@@ -680,21 +680,21 @@ public:
 
         sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
 
-        // if(cold_run) {
-        //     for(int i = 0; i < 5; i++) {
-        //         compute_cold_run(result, sched);
-        //     }
-        //     cold_run = false;
-        // }
+        if(cold_run) {
+	    taco::Tensor<double> temp_result({NUM_I, NUM_K}, taco::dense);
+            for(int i = 0; i < 2; i++) {
+                compute_cold_run(temp_result, sched);
+            }
+            cold_run = false;
+        }
 
 
         taco::util::Timer timer;
 
         std::vector<double> compute_times;
 
-        // result.setAssembleWhileCompute(true);
+        result.setAssembleWhileCompute(true);
         
-        timer.clear_cache();
         result.compile(sched);
         result.assemble();
         for(int i = 0; i < num_reps; i++) {
