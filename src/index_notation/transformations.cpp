@@ -1214,7 +1214,7 @@ IndexStmt SetAssembleStrategy::apply(IndexStmt stmt, string* reason) const {
                 insertedResults.insert(dedupTmp);
 
                 const auto resultName = modeName + "_" + attr.label;
-                TensorVar queryResult(resultName, Type(Int32, queryDims));
+                TensorVar queryResult(resultName, Type(Int(), queryDims));
                 epilog = Assignment(queryResult(groupBy),
                                     Cast(dedupTmp(dedupCoords), Int()), Add());
                 for (const auto& coord : util::reverse(dedupCoords)) {

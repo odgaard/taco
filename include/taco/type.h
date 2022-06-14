@@ -75,7 +75,11 @@ extern Datatype UInt16;
 extern Datatype UInt32;
 extern Datatype UInt64;
 extern Datatype UInt128;
-Datatype Int(int bits = sizeof(int)*8);
+#ifdef TACO_DEFAULT_INTEGER_TYPE
+Datatype Int(int bits = sizeof(TACO_DEFAULT_INTEGER_TYPE)*8);
+#else
+Datatype Int(int bits = sizeof(int64_t)*8);
+#endif
 extern Datatype Int8;
 extern Datatype Int16;
 extern Datatype Int32;
