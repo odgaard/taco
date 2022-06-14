@@ -34,6 +34,11 @@ if(PYTHON)
   set(TACO_FEATURE_PYTHON 1)
 endif(PYTHON)
 
+# Enable for build-time control over what integer types are used by TACO.
+if (DEFINED TACO_DEFAULT_INTEGER_TYPE)
+  add_compile_definitions(-DTACO_DEFAULT_INTEGER_TYPE=${TACO_DEFAULT_INTEGER_TYPE})
+endif()
+
 SET(CMAKE_CONFIGURATION_TYPES "Release;Debug;MinSizeRel;RelWithDebInfo")
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -1,6 +1,6 @@
 #include "taco/lower/mode_format_compressed.h"
 
-#include "ir/ir_generators.h"
+#include "taco/ir/ir_generators.h"
 #include "taco/ir/simplify.h"
 #include "taco/util/strings.h"
 
@@ -17,8 +17,8 @@ CompressedModeFormat::CompressedModeFormat(bool isFull, bool isOrdered,
                                            bool isUnique, bool isZeroless, 
                                            long long allocSize) :
     ModeFormatImpl("compressed", isFull, isOrdered, isUnique, false, true,
-                   isZeroless, false, true, false, false, true, true, true, 
-                   false), 
+                   isZeroless, false, false, true, false, false, true, true,  
+                   true, false), 
     allocSize(allocSize) {
 }
 
@@ -159,7 +159,7 @@ Stmt CompressedModeFormat::getAppendInitLevel(Expr szPrev, Expr sz,
   const bool szPrevIsZero = isa<ir::Literal>(szPrev) && 
                             to<ir::Literal>(szPrev)->equalsScalar(0);
 
-  Expr defaultCapacity = ir::Literal::make(allocSize, Datatype::Int32); 
+  Expr defaultCapacity = ir::Literal::make(allocSize, Int()); 
   Expr posArray = getPosArray(mode.getModePack());
   Expr initCapacity = szPrevIsZero ? defaultCapacity : ir::Add::make(szPrev, 1);
   Expr posCapacity = initCapacity;
@@ -309,6 +309,10 @@ Expr CompressedModeFormat::getCoordCapacity(Mode mode) const {
   }
 
   return mode.getVar(varName);
+}
+
+Expr CompressedModeFormat::getWidth(Mode mode) const {
+  return ir::Literal::make(allocSize, Int());
 }
 
 bool CompressedModeFormat::equals(const ModeFormatImpl& other) const {

@@ -42,6 +42,7 @@ enum class IRNodeType {
   Lte,
   And,
   Or,
+  BinOp,
   Cast,
   Call,
   IfThenElse,
@@ -78,6 +79,7 @@ enum class TensorProperty {
   ModeTypes,
   Indices,
   Values,
+  FillValue,
   ValuesSize
 };
 
@@ -201,6 +203,75 @@ std::ostream &operator<<(std::ostream &os, const Expr &);
 
 // Actual nodes start here
 
+// We have to be careful with how we convert arbitrary types into TypedComponentVal
+// objects. In particular, we have to be careful when converting a smaller width
+// object into a larger width Datatype, such as an int32_t into a Int64. This operation
+// will read 64 bits from the start of the int32_t, resulting in a garbage read.
+// Instead, we'll first cast the input value to the desired primitive data type,
+// and then perform the read to ensure that the target data is indeed read.
+template <typename T>
+TypedComponentVal toTypedComponentVal(T val, Datatype type) {
+  switch (type.getKind()) {
+    case Datatype::Bool: {
+      auto res = bool(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::UInt8: {
+      auto res = uint8_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::UInt16: {
+      auto res = uint16_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::UInt32: {
+      auto res = uint32_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::UInt64: {
+      auto res = uint64_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Int8: {
+      auto res = int8_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Int16: {
+      auto res = int16_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Int32: {
+      auto res = int32_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Int64: {
+      auto res = int64_t(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Float32: {
+      auto res = float(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Float64: {
+      auto res = double(val);
+      return TypedComponentVal(type, &res);
+    }
+    case Datatype::Complex64:
+    case Datatype::Complex128:
+    case Datatype::UInt128:
+    case Datatype::CppType:
+    case Datatype::Undefined:
+    case Datatype::Int128:
+    default:
+      taco_not_supported_yet;
+      return TypedComponentVal();
+  }
+}
+template <>
+TypedComponentVal toTypedComponentVal(std::complex<float> val, Datatype type);
+template <>
+TypedComponentVal toTypedComponentVal(std::complex<double> val, Datatype type);
+
 /** A literal. */
 struct Literal : public ExprNode<Literal> {
   TypedComponentPtr value;
@@ -216,7 +287,7 @@ struct Literal : public ExprNode<Literal> {
 
   template <typename T>
   static Expr make(T val, Datatype type) {
-    return make(TypedComponentVal(type, &val), type);
+    return make(toTypedComponentVal(val, type), type);
   }
 
   template <typename T>
@@ -233,6 +304,14 @@ struct Literal : public ExprNode<Literal> {
   T getValue() const {
     taco_iassert(taco::type<T>() == type);
     return *static_cast<const T*>(value.get());
+  }
+
+  Expr promote(Datatype dt) const {
+    taco_iassert(max_type(dt, type) == dt);
+    if(type == dt) {
+      return Literal::make(getTypedVal(), dt);
+    }
+    return Expr();
   }
 
   TypedComponentVal getTypedVal() const {
@@ -461,6 +540,20 @@ struct Or : public ExprNode<Or> {
   static Expr make(Expr a, Expr b);
 
   static const IRNodeType _type_info = IRNodeType::Or;
+};
+
+/** [Sparse Array Programming] Generic Binary Op for Ufuncs**/
+struct BinOp : public ExprNode<BinOp> {
+  Expr a;
+  Expr b;
+  std::string strStart = "";
+  std::string strMid = "";
+  std::string strEnd = "";
+
+  static Expr make(Expr a, Expr b, std::string op);
+  static Expr make(Expr a, Expr b, std::string strStart, std::string strMid, std::string strEnd);
+
+  static const IRNodeType _type_info = IRNodeType::BinOp;
 };
 
 /** Type cast. */
