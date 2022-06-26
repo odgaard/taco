@@ -1090,14 +1090,15 @@ public:
         taco::util::Timer timer;
         std::vector<double> compute_times;
 
-        // result.setAssembleWhileCompute(true);
         
         timer.clear_cache();
         result.compile(sched);
-        result.assemble();
         for(int i = 0; i < num_reps; i++) {
             timer.start();
+            // result.setAssembleWhileCompute(true);
             result.setNeedsCompute(true);
+	    result.setNeedsAssemble(true);
+            result.assemble();
             result.compute();
             timer.stop();
 

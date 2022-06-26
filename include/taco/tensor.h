@@ -500,6 +500,7 @@ public:
   friend struct AccessTensorNode;
   std::vector<TensorBase> getDependentTensors();
   void setNeedsCompute(bool needsCompute);
+  void setNeedsAssemble(bool needsAssemble);
 private:
   static std::shared_ptr<ir::Module> getHelperFunctions(
       const Format& format, Datatype ctype, const std::vector<int>& dimensions);
@@ -513,7 +514,7 @@ private:
   void unsetNeverPacked();
   void setNeedsPack(bool needsPack);
   void setNeedsCompile(bool needsCompile);
-  void setNeedsAssemble(bool needsAssemble);
+  // void setNeedsAssemble(bool needsAssemble);
   // void setNeedsCompute(bool needsCompute);
 
   void addDependentTensor(TensorBase& tensor);
