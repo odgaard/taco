@@ -1,1 +1,3 @@
 add_subdirectory(tensor_times_vector)
+add_subdirectory(taco_dse)
+add_subdirectory(small_test)
