@@ -163,6 +163,12 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
     HMScenario["optimization_iterations"] = 0;
   }
 
+  json HMFeasibleOutput;
+      HMFeasibleOutput["enable_feasible_predictor"] = true;
+          HMFeasibleOutput["false_value"] = "0";
+	      HMFeasibleOutput["true_value"] = "1";
+	      HMScenario["feasible_output"] = HMFeasibleOutput;
+
   json HMDOE;
   HMDOE["doe_type"] = "random sampling";
   HMDOE["number_of_samples"] = NumDSERandomSamples;
@@ -359,7 +365,7 @@ int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(ompNumThreadsParam);
   numParams++;
 
-  int reorder_size = 3;
+  int reorder_size = 4;
   std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
   HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
   loopOrderingParam->setRange(valuesRange);
@@ -630,7 +636,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   compute_times = std::vector<double>();
   spmm_handler->set_cold_run();
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
-  
+
 
   if(default_config_time == 0.0f) {
     // std::cout << "Default time: " << Obj.compute_time << std::endl;
@@ -654,7 +660,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     spmm_handler->set_cold_run();
   }
 
-  double compute_time = no_sched_init ? no_sched_time : spmm_handler->get_compute_time();  
+  double compute_time = no_sched_init ? no_sched_time : spmm_handler->get_compute_time();
   Obj.compute_time = compute_time;
 
   return Obj;
@@ -771,6 +777,8 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   return Obj;
 }
 
+float dummy_result = 200.0f;
+
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
@@ -797,7 +805,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     // sparsity = ttv_handler->get_sparsity();
     num_i = ttv_handler->NUM_I;
     num_j = ttv_handler->NUM_J;
-    
+
     // Added for filtering vectors out from suitesparse
     op = "TTV";
 
@@ -820,8 +828,9 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     try {
       ttv_handler->schedule_and_compute(temp_result, chunk_size, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
     } catch (const taco::TacoException& err) {
-      compute_times.push_back(10000.0f);
-      valid = false;      
+      compute_times.push_back(dummy_result);
+      dummy_result += 10.0f;
+      valid = false;
       break;
     }
     compute_times.push_back(ttv_handler->get_compute_time());
@@ -867,7 +876,7 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
     num_i = ttm_handler->NUM_I;
     num_j = ttm_handler->NUM_J;
     //int num_l = ttm_handler->NUM_L;
-    
+
     // Added for filtering vectors out from suitesparse
     op = "TTM";
 
@@ -968,137 +977,146 @@ bool validate_ordering_sddmm(std::vector<int> order) {
     //     return false;
     //   }
     // }
-    
+
   }
   return true;
 }
 
-void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
+// void sddmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
 
-  std::vector<std::vector<std::vector<double>>> obj_values(120, vector(7, vector<double>(2)));
-  using namespace taco;
+//   using namespace taco;
 
-  std::vector<int> default_ordering{0,1,2,3,4};
-  std::vector<double> compute_times;
+//   std::vector<int> default_ordering{0,1,2,3,4};
+//   std::vector<double> compute_times;
 
-  if(!initialized) {
-    // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
-    // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
-    sddmm_handler = new SDDMM();
-    sddmm_handler->matrix_name = matrix_name;
-    // spmm_handler->initialize_data(0);
-    sddmm_handler->initialize_data(1);
-    initialized = true;
-    sparsity = sddmm_handler->get_sparsity();
-    op = "SDDMM";
+//   if(!initialized) {
+//     // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
+//     // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
 
-    // Taco requires you to start with running the deafult
-    std::vector<int> tmp_loop_ordering = default_ordering;
-    // int tmp_chunk_size = 16;
-    // int tmp_unroll_factor = 8;
-    // taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
-    // sddmm_handler->generate_schedule(temp_result, tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
-    // compute_times = vector<double>();
-    // for(int i = 0; i < num_reps; i++) {
-    //   sddmm_handler->compute(temp_result, true);
-    //   compute_times.push_back(sddmm_handler->get_compute_time());
-    // }
-    // default_config_time = median(compute_times);
-  }
+//     sddmm_handler = new SDDMM();
+//     spmm_handler = new SpMM();
 
-  std::string test_name = "SDDMM";
-  std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512};
-  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> ompSchedulingType{0, 1};
-  std::vector<int> ompChunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> loop_ordering{0, 1, 2, 3, 4};
-  int unroll_factor = 8;
-  int chunk_size = 16;
-  int num_threads = 32;
+//     sddmm_handler->matrix_name = matrix_name;
+//     spmm_handler->matrix_name = matrix_name;
+//     spmm_handler->NUM_K = 256;
+//     // spmm_handler->initialize_data(0);
+//     if (type == "SDDMM") {
+//       sddmm_handler->initialize_data(1);
+//     } else if (type == "SpMM") {
+//       spmm_handler->initialize_data(1);
+//     } else {
+//       throw std::invalid_argument("type needs to be SDDMM or SpMM");
+//     }
+//     initialized = true;
+//     // sparsity = handler->get_sparsity();
+//     op = "SDDMM";
+
+//     // Taco requires you to start with running the deafult
+//     std::vector<int> tmp_loop_ordering = default_ordering;
+//     // int tmp_chunk_size = 16;
+//     // int tmp_unroll_factor = 8;
+//     // taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
+//     // sddmm_handler->generate_schedule(temp_result, tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
+//     // compute_times = vector<double>();
+//     // for(int i = 0; i < num_reps; i++) {
+//     //   sddmm_handler->compute(temp_result, true);
+//     //   compute_times.push_back(sddmm_handler->get_compute_time());
+//     // }
+//     // default_config_time = median(compute_times);
+//   }
+
+//   std::vector<int> chunkSizeValues{8, 16, 32, 64, 128, 256, 512};
+//   std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+//   std::vector<int> ompSchedulingType{0, 1};
+//   std::vector<int> ompChunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+//   std::vector<int> loop_ordering{0, 1, 2, 3, 4};
+//   std::vector<int> numThreadsValues{0, 1, 2, 4, 8, 16, 32};
+//   int unroll_factor = 8;
+//   int chunk_size = 16;
+//   int num_threads = 32;
+//   int omp_chunk_size = 16;
+//   int omp_scheduling_type = 0;
+//   std::vector<std::vector<int>> loop_orderings;
 
 
-  int permutation_idx = 0;
-  std::vector<int> valid(120, true);
-  for (int omp_chunk_size_idx = 0; omp_chunk_size_idx < 1; omp_chunk_size_idx++) {
-    int omp_chunk_size = ompChunkSizeValues[omp_chunk_size_idx];
-    cout << chunk_size << endl;
+//   int permutation_idx = 0;
+//   std::vector<int> valid(120, true);
+//   for (int omp_chunk_size_idx = 0; omp_chunk_size_idx < 1; omp_chunk_size_idx++) {
+//     int omp_chunk_size = ompChunkSizeValues[omp_chunk_size_idx];
+//     cout << chunk_size << endl;
 
-    permutation_idx = 0;
-    loop_ordering = vector<int>{0, 1, 2, 3, 4};
+//     permutation_idx = 0;
+//     loop_ordering = vector<int>{0, 1, 2, 3, 4};
 
-    do {
-      for (int l : loop_ordering) {
-        cout << l << " ";
-      }
-      
-      cout << endl;
-      // if(!validate_ordering_sddmm(loop_ordering)) {
-      //   std::cout << "Invalid loop_ordering" << std::endl;
-      //   valid[permutation_idx] = false;
-      //   // permutation_idx++;
-      //   continue;
-      // }
-      for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
+//     do {
+//       for (int l : loop_ordering) {
+//         cout << l << " ";
+//       }
 
-        sddmm_handler->set_cold_run();
-        double total_time = 0.0;
-        for(int i = 0; i < num_reps; i++) {
-          taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
-          try {
-            sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads, false);
-            // sddmm_handler->compute(temp_result, false);
-            total_time += sddmm_handler->get_compute_time();
-          } catch(const taco::TacoException& err) {
-            std::cout << "Exception found" << std::endl;
-            total_time = 0.0;
-            // valid[permutation_idx] = false;
-            valid[permutation_idx] = 2;
-            break;
-          }
-          // taco::TensorStorage store = temp_result.getStorage();
-          // delete store;
+//       cout << endl;
+//       // if(!validate_ordering_sddmm(loop_ordering)) {
+//       //   std::cout << "Invalid loop_ordering" << std::endl;
+//       //   valid[permutation_idx] = false;
+//       //   // permutation_idx++;
+//       //   continue;
+//       // }
+//       for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
 
-        }
-        // if(permutation_idx == 1) {
-        //   goto end;
-        // }
+//         sddmm_handler->set_cold_run();
+//         double total_time = 0.0;
+//         for(int i = 0; i < num_reps; i++) {
+//           taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
+//           try {
+//             sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads, false);
+//             // sddmm_handler->compute(temp_result, false);
+//             total_time += sddmm_handler->get_compute_time();
+//           } catch(const taco::TacoException& err) {
+//             std::cout << "Exception found" << std::endl;
+//             total_time = 0.0;
+//             // valid[permutation_idx] = false;
+//             valid[permutation_idx] = 2;
+//             break;
+//           }
+//           // taco::TensorStorage store = temp_result.getStorage();
+//           // delete store;
 
-        double compute_time = total_time / num_reps;
-        obj_values[permutation_idx][omp_chunk_size_idx][omp_scheduling_type] = compute_time;
-      }
-      permutation_idx ++;
-    } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
-  }
-  end:
+//         }
+//         // if(permutation_idx == 1) {
+//         //   goto end;
+//         // }
 
-  std::vector<int> loop_ordering2{0, 1, 2, 3, 4};
-  permutation_idx = 0;
+//         double compute_time = total_time / num_reps;
+//         obj_values[idx1][idx2][idx3] = compute_time;
+//       }
+//     }
+//   }
+//   end:
 
-  do {
-    for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
-      for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
-        cout << obj_values[permutation_idx][chunkSize_idx][omp_scheduling_type] << " ";
-      }
-    }
-    cout << endl;
-    permutation_idx ++;
-  } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
+//   for (int idx1 = 0; idx1 < size1; idx1++) {
+//     for (int idx2 = 0; idx2 < size2; idx2++) {
+//       for (int idx3 = 0; idx3 < size3; idx3++) {
+//         cout << obj_values[idx1][idx2][idx3] << " ";
+//       }
+//     }
+//     cout << endl;
+//     permutation_idx ++;
+//   } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
 
-  std::vector<int> loop_ordering3{0, 1, 2, 3, 4};
-  permutation_idx = 0;
+//   std::vector<int> loop_ordering3{0, 1, 2, 3, 4};
+//   permutation_idx = 0;
 
-  do {
-    // if(!validate_ordering(loop_ordering3)) {
-    //     continue;
-    // }
-    for(auto elems : loop_ordering3) {
-      std::cout << elems << " ";
-    }
-    cout << "\t" << valid[permutation_idx];
-    cout << endl;
-    permutation_idx ++;
-  } while (std::next_permutation(loop_ordering3.begin(), loop_ordering3.end()));
-}
+//   do {
+//     // if(!validate_ordering(loop_ordering3)) {
+//     //     continue;
+//     // }
+//     for(auto elems : loop_ordering3) {
+//       std::cout << elems << " ";
+//     }
+//     cout << "\t" << valid[permutation_idx];
+//     cout << endl;
+//     permutation_idx ++;
+//   } while (std::next_permutation(loop_ordering3.begin(), loop_ordering3.end()));
+// }
 
 bool validate_ordering(std::vector<int> order) {
   std::unordered_map<int, int> dict;
@@ -1121,12 +1139,12 @@ bool validate_ordering(std::vector<int> order) {
       if(dict.find(2) != dict.end()) {
         return false;
       }
-    } 
+    }
     if(order[i] == 1) {
       if(dict.find(2) != dict.end()) {
         return false;
       }
-    } 
+    }
   }
   return true;
 }
@@ -1466,7 +1484,7 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
     num_j = spmm_handler->get_num_j();
     op = "SpMM";
   }
-  
+
 
   compute_times = std::vector<double>();
   spmm_handler->set_cold_run();
@@ -1480,7 +1498,7 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
   }
 
   double compute_time = median(compute_times);
-  
+
   std::cout << "Compute time: " << compute_time << std::endl;
   return 0;
 }
@@ -1539,7 +1557,7 @@ int main(int argc, char **argv) {
     .default_value(std::string("0"))
     .required();
   try {
-    program.parse_args(argc, argv);    
+    program.parse_args(argc, argv);
   } catch (const std::runtime_error& err) {
     std::cerr << err.what() << std::endl;
     std::cerr << program;
@@ -1559,7 +1577,7 @@ int main(int argc, char **argv) {
   count = program.get<std::string>("--count");
   int omp_chunk_size = program.get<int>("--omp_chunk_size");
 
-  bool Predictor = false;
+  bool Predictor = true;
 
   std::string log_file_ = "hypermapper_taco_log.csv";
   bool log_exists = fs::exists(log_file_);
@@ -1572,7 +1590,7 @@ int main(int argc, char **argv) {
 
   if (exh_search) {
     // spmmExhaustiveSearch(matrix_name, logger);
-    sddmmExhaustiveSearch(matrix_name, logger_);
+    // sddmmExhaustiveSearch(matrix_name, logger_);
     // SpMMVarianceTest(logger);
     exit(0);
   }
@@ -1740,6 +1758,7 @@ int main(int argc, char **argv) {
     for (auto objString : Objectives)
       response += objString + ",";
     if (Predictor) {
+      std::cout << response << std::endl;
       response += "Valid";
     }
     response += "\n";
