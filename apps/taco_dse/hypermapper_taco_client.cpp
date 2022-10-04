@@ -340,15 +340,29 @@ int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
 int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams) {
   int numParams = 0;
 
-  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> chunkSizeIValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> chunkSizeFposValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> chunkSizeKValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+
   std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
   std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
   std::vector<int> ompSchedulingType{0, 1};
 
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
+  HMInputParam<int> *chunkSizeIParam = new HMInputParam<int>("chunk_size_i", ParamType::Ordinal);
+  chunkSizeIParam->setRange(chunkSizeIValues);
+  InParams.push_back(chunkSizeIParam);
   numParams++;
+
+  HMInputParam<int> *chunkSizeFposParam = new HMInputParam<int>("chunk_size_fpos", ParamType::Ordinal);
+  chunkSizeFposParam->setRange(chunkSizeFposValues);
+  InParams.push_back(chunkSizeFposParam);
+  numParams++;
+
+  HMInputParam<int> *chunkSizeKParam = new HMInputParam<int>("chunk_size_k", ParamType::Ordinal);
+  chunkSizeKParam->setRange(chunkSizeKValues);
+  InParams.push_back(chunkSizeKParam);
+  numParams++;
+
 
   HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
   ompSchedulingTypeParam->setRange(ompSchedulingType);
@@ -365,7 +379,7 @@ int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(ompNumThreadsParam);
   numParams++;
 
-  int reorder_size = 4;
+  int reorder_size = 5;
   std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
   HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
   loopOrderingParam->setRange(valuesRange);
@@ -783,12 +797,14 @@ float dummy_result = 200.0f;
 HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
-  int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[4])->getVal();
-  std::vector<int> default_ordering{0,1,2};
+  int chunk_size_i = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
+  int chunk_size_fpos = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
+  int chunk_size_k = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
+  std::vector<int> default_ordering{0,1,2,3,4};
 
   int NUM_I = 10000;
   int NUM_J = 10000;
@@ -819,14 +835,14 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
-  bool default_config = (chunk_size == 16);
+  bool default_config = (chunk_size_i == 16);
   bool valid = true;
 
   compute_times = vector<double>();
   taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
   for(int i = 0; i < num_reps; i++) {
     try {
-      ttv_handler->schedule_and_compute(temp_result, chunk_size, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+      ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
     } catch (const taco::TacoException& err) {
       compute_times.push_back(dummy_result);
       dummy_result += 10.0f;
