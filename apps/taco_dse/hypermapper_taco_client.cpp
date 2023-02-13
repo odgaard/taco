@@ -35,6 +35,7 @@ SpMM *spmm_handler;
 SDDMM *sddmm_handler;
 TTV *ttv_handler;
 TTM *ttm_handler;
+MTTKRP *mttkrp_handler;
 bool initialized = false;
 
 using namespace std::chrono;
@@ -437,6 +438,53 @@ int collectInputParamsTTM(std::vector<HMInputParamBase *> &InParams) {
   return numParams;
 }
 
+
+int collectInputParamsMTTKRP(std::vector<HMInputParamBase *> &InParams) {
+  int numParams = 0;
+
+  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
+  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
+  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
+  std::vector<int> ompSchedulingType{0, 1};
+
+  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
+  chunkSizeParam->setRange(chunkSizeValues);
+  InParams.push_back(chunkSizeParam);
+  numParams++;
+
+  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
+  unrollFactorParam->setRange(unrollFactorValues);
+  InParams.push_back(unrollFactorParam);
+  numParams++;
+
+  // FIXME: For some reason categorical fails for this param
+  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
+  ompSchedulingTypeParam->setRange(ompSchedulingType);
+  InParams.push_back(ompSchedulingTypeParam);
+  numParams++;
+
+  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
+  ompChunkSizeParam->setRange(ompChunkSizeValues);
+  InParams.push_back(ompChunkSizeParam);
+  numParams++;
+
+  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
+  ompNumThreadsParam->setRange(ompNumThreadsValues);
+  InParams.push_back(ompNumThreadsParam);
+  numParams++;
+
+  int reorder_size = 5;
+  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
+  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
+  loopOrderingParam->setRange(valuesRange);
+  InParams.push_back(loopOrderingParam);
+  numParams++;
+  num_loops = reorder_size;
+
+  return numParams;
+}
+
 int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name) {
   if (test_name == "SpMV")
     return collectInputParamsSpMV(InParams);
@@ -450,6 +498,8 @@ int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string te
     return collectInputParamsTTV(InParams);
   if (test_name == "TTM")
     return collectInputParamsTTM(InParams);
+  if (test_name == "MTTKRP")
+    return collectInputParamsMTTKRP(InParams);
   else {
     std::cout << "Test case not implemented yet" << std::endl;
     exit(-1);
@@ -515,38 +565,43 @@ void setInputValue(HMInputParamBase *Param, std::string ParamVal) {
 HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
-  int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
-  // int order = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
+  // int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
+  // // int order = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
 
-  std::vector<int> default_ordering;
-  std::vector<int> loop_ordering;
-  for(int i = 0; i < num_loops; i++) {
-    // std::cout << "in here\n";
-    int order = static_cast<HMInputParam<int>*>(InputParams[i + 1])->getVal();
-    loop_ordering.push_back(order);
-    default_ordering.push_back(i);
-  }
+  // std::vector<int> default_ordering;
+  // std::vector<int> loop_ordering;
+  // for(int i = 0; i < num_loops; i++) {
+  //   // std::cout << "in here\n";
+  //   int order = static_cast<HMInputParam<int>*>(InputParams[i + 1])->getVal();
+  //   loop_ordering.push_back(order);
+  //   default_ordering.push_back(i);
+  // }
 
-  // int NUM_I = 10000;
-  // int NUM_J = 10000;
-  if(!initialized) {
-    // spmv_handler = new SpMV(NUM_I, NUM_J);
-    spmv_handler = new SpMV();
-    spmv_handler->matrix_name = matrix_name;
-    spmv_handler->initialize_data(1);
-    initialized = true;
-  }
+  // // int NUM_I = 10000;
+  // // int NUM_J = 10000;
+  // if(!initialized) {
+  //   // spmv_handler = new SpMV(NUM_I, NUM_J);
+  //   spmv_handler = new SpMV();
+  //   spmv_handler->matrix_name = matrix_name;
+  //   spmv_handler->initialize_data(1);
+  //   initialized = true;
+  //   sparsity = spmv_handler->get_sparsity();
+  //   num_i = spmv_handler->get_num_i();
+  //   op = "SpMV";
 
-  spmv_handler->generate_schedule(chunk_size, 0, 0, loop_ordering);
+  //   compute_times = vector<double>();
+  // }
 
-  bool default_config = (chunk_size == 16 && loop_ordering == default_ordering);
-  spmv_handler->compute(default_config);
+  // spmv_handler->generate_schedule(chunk_size, 0, 0, loop_ordering);
 
-  Obj.compute_time = spmv_handler->get_compute_time();
+  // bool default_config = (chunk_size == 16 && loop_ordering == default_ordering);
+  // spmv_handler->compute(default_config);
 
-  if(chunk_size == 16 && loop_ordering == default_ordering) {
-    default_config_time = spmv_handler->get_default_compute_time();
-  }
+  // Obj.compute_time = spmv_handler->get_compute_time();
+
+  // if(chunk_size == 16 && loop_ordering == default_ordering) {
+  //   default_config_time = spmv_handler->get_default_compute_time();
+  // }
   return Obj;
 }
 
@@ -812,6 +867,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 
   std::vector<double> compute_times;
 
+  bool no_sched_init = false;
+
   if(!initialized) {
     cout << "INITIALIZING" << endl;
     ttv_handler = new TTV();
@@ -827,11 +884,13 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 
     compute_times = vector<double>();
     for(int i = 0; i < 5; i++) {
+      // std::cout << "Computing unscheduled" << std::endl;
       double timer = 0.0;
       timer = ttv_handler->compute_unscheduled();
       compute_times.push_back(timer);
     }
     no_sched_time = median(compute_times);
+    no_sched_init = true;
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
@@ -839,6 +898,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   bool valid = true;
 
   compute_times = vector<double>();
+  ttv_handler->set_cold_run();
   taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
   for(int i = 0; i < num_reps; i++) {
     try {
@@ -856,8 +916,24 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   Obj.valid = valid;
 
   if(default_config_time = 0.0f) {
-    default_config_time = ttv_handler->get_default_compute_time();
+    std::cout << "Computing default unscheduled" << std::endl;
+    int temp_chunk_size = 16;
+    // int temp_unroll_factor = 8;
+    std::vector<int> temp_loop_ordering{0,1,2};
+    int temp_omp_scheduling_type = 0;
+    int temp_omp_chunk_size = 1;
+    int temp_omp_num_threads = 32;
+    // default_config_time = ttv_handler->get_default_compute_time();
+    ttv_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
+    ttv_handler->set_cold_run();
+
+    default_config_time = ttv_handler->get_compute_time();
     logger << ttv_handler->get_num_i() << "," << ttv_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
+  }
+
+  if(!no_sched_init) {
+    ttv_handler->schedule_and_compute(temp_result, chunk_size, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+    ttv_handler->set_cold_run();
   }
 
   return Obj;
@@ -881,6 +957,8 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
 
   std::vector<double> compute_times;
 
+  bool no_sched_init = false;
+
   if(!initialized) {
     cout << "INITIALIZING" << endl;
     ttm_handler = new TTM();
@@ -903,22 +981,214 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
       compute_times.push_back(timer);
     }
     no_sched_time = median(compute_times);
+    no_sched_init = true;
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool default_config = (chunk_size == 16);
 
   compute_times = vector<double>();
+  ttm_handler->set_cold_run();
   taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, taco::dense);
 
-  ttm_handler->schedule_and_compute(temp_result, chunk_size, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+  std::vector<bool> valid_perm(120, true);
+  std::vector<std::vector<int>> orders;
+  loop_ordering = vector<int>{0, 1, 2, 3, 4};
+  bool valid_order = false;
+  int counter = 0;
+  int num_right = 0;
+  do {
+    for(int l : loop_ordering) {
+      std::cout << l << " ";
+    }
+    orders.push_back(loop_ordering);
+    std::cout << std::endl;
+    num_reps = 1;
+    for(int i = 0; i < num_reps; i++) {
+      try {
+        ttm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+        valid_order = true;
+        num_right++;
+        // valid_perm.push_back(valid_order);
+      } catch (const taco::TacoException& err) {
+        compute_times.push_back(10000.0f);
+        valid_order = false;      
+        // valid_perm.push_back(valid_order);
+        valid_perm[counter] = false;
+        // break;
+      }
+      std::cout << std::boolalpha << valid_order << std::endl;
+      compute_times.push_back(ttm_handler->get_compute_time());
+    }
+    // valid_perm.push_back(valid_order);
+    counter++;
+  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
 
-  Obj.compute_time = ttm_handler->get_compute_time();
+
+  int count = 0;
+  for(auto l : orders) {
+    for(auto index : l) {
+      std::cout << index << " ";
+    }
+    std::cout << "| " << valid_perm[count];
+    std::cout << std::endl;
+    count++;
+  }
+
+  std::cout << "Number correct: " << num_right << std::endl;
+
+  exit(1);
+
+  // ttm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+
+  Obj.compute_time = median(compute_times);
 
   if(default_config_time = 0.0f) {
-    default_config_time = ttv_handler->get_default_compute_time();
-    logger << ttv_handler->get_num_i() << "," << ttv_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
+    std::cout << "Computing default unscheduled" << std::endl;
+    int temp_chunk_size = 16;
+    int temp_unroll_factor = 8;
+    std::vector<int> temp_loop_ordering{0,1,2,3,4};
+    int temp_omp_scheduling_type = 0;
+    int temp_omp_chunk_size = 1;
+    int temp_omp_num_threads = 32;
+    // default_config_time = ttv_handler->get_default_compute_time();
+    ttm_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_unroll_factor, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
+    ttm_handler->set_cold_run();
+
+    default_config_time = ttm_handler->get_compute_time();
+    // logger << ttm_handler->get_num_i() << "," << ttm_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
   }
+
+  // if(!no_sched_init) {
+  //   ttm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+  //   ttm_handler->set_cold_run();
+  // }
+
+
+  return Obj;
+}
+
+HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+  using namespace taco;
+  HMObjective Obj;
+  int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
+  int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[5])->getVal();
+  std::vector<int> default_ordering{0,1,2,3,4};
+
+  int NUM_I = 10000;
+  int NUM_J = 10000;
+  int NUM_K = 1000;
+
+  std::vector<double> compute_times;
+
+  bool no_sched_init = false;
+
+  if(!initialized) {
+    cout << "INITIALIZING" << endl;
+    mttkrp_handler = new MTTKRP();
+    mttkrp_handler->matrix_name = matrix_name;
+    mttkrp_handler->NUM_J = 2560;
+    mttkrp_handler->initialize_data(1);
+    initialized = true;
+    // sparsity = ttv_handler->get_sparsity();
+    num_i = mttkrp_handler->NUM_I;
+    num_j = mttkrp_handler->NUM_J;
+    //int num_l = mttkrp_handler->NUM_L;
+
+    // Added for filtering vectors out from suitesparse
+    op = "MTTKRP";
+
+    compute_times = vector<double>();
+    for(int i = 0; i < 5; i++) {
+      double timer = 0.0;
+      timer = mttkrp_handler->compute_unscheduled();
+      compute_times.push_back(timer);
+    }
+    no_sched_time = median(compute_times);
+    no_sched_init = true;
+  }
+
+  //Initiate scheduling passing in chunk_size (param to optimize)
+  bool default_config = (chunk_size == 16);
+
+  compute_times = vector<double>();
+  mttkrp_handler->set_cold_run();
+  taco::Tensor<double> temp_result({mttkrp_handler->NUM_I, mttkrp_handler->NUM_J}, taco::dense);
+
+  std::vector<bool> valid_perm(120, true);
+  std::vector<std::vector<int>> orders;
+  loop_ordering = vector<int>{0, 1, 2, 3, 4};
+  bool valid_order = false;
+  int counter = 0;
+  int num_right = 0;
+  do {
+    for(int l : loop_ordering) {
+      std::cout << l << " ";
+    }
+    orders.push_back(loop_ordering);
+    std::cout << std::endl;
+    num_reps = 1;
+    for(int i = 0; i < num_reps; i++) {
+      // try {
+        mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+        valid_order = true;
+        num_right++;
+        // valid_perm.push_back(valid_order);
+      // } catch (const taco::TacoException& err) {
+        // compute_times.push_back(10000.0f);
+        // valid_order = false;
+        // valid_perm[counter] = false;
+      // }
+      std::cout << std::boolalpha << valid_order << std::endl;
+      compute_times.push_back(mttkrp_handler->get_compute_time());
+    }
+    // valid_perm.push_back(valid_order);
+    counter++;
+  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+
+
+  int count = 0;
+  for(auto l : orders) {
+    for(auto index : l) {
+      std::cout << index << " ";
+    }
+    std::cout << "| " << valid_perm[count];
+    std::cout << std::endl;
+    count++;
+  }
+
+  std::cout << "Number correct: " << num_right << std::endl;
+
+  exit(1);
+
+  // mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+
+  Obj.compute_time = median(compute_times);
+
+  if(default_config_time = 0.0f) {
+    std::cout << "Computing default unscheduled" << std::endl;
+    int temp_chunk_size = 16;
+    int temp_unroll_factor = 8;
+    std::vector<int> temp_loop_ordering{0,1,2,3,4};
+    int temp_omp_scheduling_type = 0;
+    int temp_omp_chunk_size = 1;
+    int temp_omp_num_threads = 32;
+    // default_config_time = ttv_handler->get_default_compute_time();
+    mttkrp_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_unroll_factor, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
+    mttkrp_handler->set_cold_run();
+
+    default_config_time = mttkrp_handler->get_compute_time();
+    // logger << mttkrp_handler->get_num_i() << "," << mttkrp_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
+  }
+
+  // if(!no_sched_init) {
+  //   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+  //   mttkrp_handler->set_cold_run();
+  // }
 
 
   return Obj;
@@ -937,6 +1207,8 @@ HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::s
     return calculateObjectiveTTVDense(InParams, matrix_name, logger);
   if (test_name == "TTM")
     return calculateObjectiveTTMDense(InParams, matrix_name, logger);
+  if (test_name == "MTTKRP")
+    return calculateObjectiveMTTKRPDense(InParams, matrix_name, logger);
   else {
     std::cout << "Test case not implemented yet" << std::endl;
     exit(-1);
@@ -1293,6 +1565,136 @@ void spmmExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
     cout << endl;
     permutation_idx ++;
   } while (std::next_permutation(loop_ordering3.begin(), loop_ordering3.end()));
+}
+
+void spmvExhaustiveSearch(std::string matrix_name, std::ofstream &logger) {
+
+  // std::vector<std::vector<std::vector<double>>> obj_values(120, vector(7, vector<double>(2)));
+  // using namespace taco;
+
+  // // int NUM_I = 67173;
+  // // int NUM_J = 67173;
+  // // int NUM_K = 256;
+  // // float _sparsity = .982356;
+  // std::vector<int> default_ordering{0,1,2,3,4};
+  // std::vector<double> compute_times;
+
+  // if(!initialized) {
+  //   // spmm_handler = new SpMM(NUM_I, NUM_J, NUM_K, sparsity);
+  //   // spmm_handler = new SpMM(0, NUM_I, NUM_J, NUM_K, _sparsity);
+  //   spmv_handler = new SpMV();
+  //   spmv_handler->matrix_name = matrix_name;
+  //   // spmm_handler->initialize_data(0);
+  //   spmv_handler->initialize_data(1);
+  //   initialized = true;
+  //   sparsity = spmv_handler->get_sparsity();
+  //   op = "SpMM";
+
+  //   // Taco requires you to start with running the deafult
+  //   std::vector<int> tmp_loop_ordering = default_ordering;
+  //   int tmp_chunk_size = 16;
+  //   int tmp_unroll_factor = 8;
+  //   taco::Tensor<double> temp_result({spmv_handler->NUM_I, spmv_handler->NUM_K}, taco::dense);
+  //   spmm_handler->generate_schedule(temp_result, tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering, 0, 0, 1);
+  //   compute_times = vector<double>();
+  //   for(int i = 0; i < num_reps; i++) {
+  //     spmm_handler->compute(temp_result, true);
+  //     compute_times.push_back(spmm_handler->get_compute_time());
+  //   }
+  //   default_config_time = median(compute_times);
+  // }
+
+  // std::string test_name = "SpMM";
+  // std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512};
+  // std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  // std::vector<int> ompSchedulingType{0, 1};
+  // std::vector<int> ompChunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+  // std::vector<int> loop_ordering{0, 1, 2, 3, 4};
+  // int unroll_factor = 8;
+  // int chunk_size = 16;
+  // int num_threads = 32;
+
+  // // std::cout << "before actual" << std::endl;
+
+  // std::vector<bool> valid(120, true);
+
+  // int permutation_idx = 0;
+  // for (int omp_chunk_size_idx = 0; omp_chunk_size_idx < 7; omp_chunk_size_idx++) {
+  //   int omp_chunk_size = ompChunkSizeValues[omp_chunk_size_idx];
+  //   cout << chunk_size << endl;
+
+  //   permutation_idx = 0;
+  //   loop_ordering = vector<int>{0, 1, 2, 3, 4};
+
+  //   int count = 0;
+
+  //   do {
+  //     for (int l : loop_ordering) {
+  //       cout << l << " ";
+  //     }
+  //     cout << endl;
+  //     // if(!validate_ordering(loop_ordering)) {
+  //     //   std::cout << "Invalid loop ordering" << std::endl;
+  //     //   continue;
+  //     // }
+  //     for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
+  //       taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
+  //       spmm_handler->generate_schedule(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, num_threads);
+  //       spmm_handler->set_cold_run();
+
+  //       double total_time = 0.0;
+  //       for(int i = 0; i < num_reps; i++) {
+  //         try {
+  //           spmm_handler->compute(temp_result, false);
+  //           total_time += spmm_handler->get_compute_time();
+  //         // } catch (const std::runtime_error& err) {
+  //         } catch (const taco::TacoException& err) {
+  //           std::cout << "Exception found" << std::endl;
+  //           // std::cout << err << std::endl;
+  //           total_time = 0.0;
+  //           valid[permutation_idx] = false;
+  //           break;
+  //         }
+  //       }
+  //       // exit(1);
+
+  //       double compute_time = total_time / num_reps;
+  //       obj_values[permutation_idx][omp_chunk_size_idx][omp_scheduling_type] = compute_time;
+  //     }
+  //     permutation_idx ++;
+  //   } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+  // }
+
+  // std::vector<int> loop_ordering2{0, 1, 2, 3, 4};
+  // permutation_idx = 0;
+
+  // do {
+  //   if(!validate_ordering(loop_ordering2)) {
+  //       continue;
+  //   }
+  //   for (int omp_scheduling_type = 0; omp_scheduling_type < 2; omp_scheduling_type++) {
+  //     for (int chunkSize_idx = 0; chunkSize_idx < 7; chunkSize_idx++) {
+  //       cout << obj_values[permutation_idx][chunkSize_idx][omp_scheduling_type] << " ";
+  //     }
+  //   }
+  //   cout << endl;
+  //   permutation_idx ++;
+  // } while (std::next_permutation(loop_ordering2.begin(), loop_ordering2.end()));
+
+  // std::vector<int> loop_ordering3{0, 1, 2, 3, 4};
+  // permutation_idx = 0;
+
+  // do {
+  //   if(!validate_ordering(loop_ordering3)) {
+  //       continue;
+  //   }
+  //   for(auto elems : loop_ordering3) {
+  //     std::cout << elems << " ";
+  //   }
+  //   cout << "\t" << valid[permutation_idx];
+  //   cout << endl;
+  //   permutation_idx ++;
+  // } while (std::next_permutation(loop_ordering3.begin(), loop_ordering3.end()));
 }
 
 // void exhaustiveSearch(std::string type, std::string matrix_name, std::ofstream &logger) {
