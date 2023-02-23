@@ -1429,13 +1429,13 @@ public:
         // sched = schedule(sched, order_, chunk_size, omp_scheduling_type, omp_chunk_size, num_threads);
         sched = schedule(sched, order, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, num_threads);
 
-        // if(cold_run) {
-        //     for(int i = 0; i < 5; i++) {
-        //         // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
-        //         compute_cold_run(result, sched);
+        if(cold_run) {
+            for(int i = 0; i < 5; i++) {
+                // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
+                compute_cold_run(result, sched);
         //     }
             cold_run = false;
-        // }
+        }
 
 
 	      taco::util::Timer timer;
