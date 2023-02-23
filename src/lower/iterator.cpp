@@ -592,7 +592,7 @@ void Iterators::createAccessIterators(Access access, Format format, Expr tensorI
                       modeNumber, level);
 
     int pos = 0;
-    for (auto& modeType : modeTypePack.getModeFormats()) {
+    for (size_t i = 0; i < modeTypePack.getModeFormats().size(); i++) {
       int modeNumber = format.getModeOrdering()[level-1];
       Dimension dim = shape.getDimension(modeNumber);
       IndexVar indexVar = access.getIndexVars()[modeNumber];
