@@ -116,7 +116,11 @@ struct UfuncInputCache {
     // this->otherTensor = get_tensor(num_k);
     if (countNNZ) {
       this->nnz = 0;
-      for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#ifdef TACO_DEFAULT_INTEGER_TYPE
+        for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#else
+        for (auto val = this->inputTensor.template beginTyped<int64_t>(); val != this->inputTensor.template endTyped<int64_t>(); ++val) {
+#endif
         this->nnz++;
       }
     }
@@ -125,6 +129,7 @@ struct UfuncInputCache {
     // }
     return this->inputTensor;
   }
+
 
   template<typename U>
   std::pair<taco::Tensor<double>, taco::Tensor<double>> getUfuncInput(std::string path, U format, bool countNNZ = false, float sparsity=0.3, int num_k = 1000, bool includeThird = false) {
@@ -150,7 +155,11 @@ struct UfuncInputCache {
     this->otherTensor = get_tensor(num_k);
     if (countNNZ) {
       this->nnz = 0;
-      for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#ifdef TACO_DEFAULT_INTEGER_TYPE
+        for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#else
+        for (auto val = this->inputTensor.template beginTyped<int64_t>(); val != this->inputTensor.template endTyped<int64_t>(); ++val) {
+#endif
         this->nnz++;
       }
     }
@@ -184,7 +193,11 @@ struct UfuncInputCache {
 
     if (countNNZ) {
       this->nnz = 0;
-      for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#ifdef TACO_DEFAULT_INTEGER_TYPE
+        for (auto& it : taco::iterate<double>(this->inputTensor)) {
+#else
+        for (auto val = this->inputTensor.template beginTyped<int64_t>(); val != this->inputTensor.template endTyped<int64_t>(); ++val) {
+#endif
         this->nnz++;
       }
     }
@@ -1415,7 +1428,8 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
-                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false) {
+                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
+                              int num_reps=10) {
         result(i, j) = B(i, j, k) * c(k);
 
         // std::cout << "Elements: " << std::endl;

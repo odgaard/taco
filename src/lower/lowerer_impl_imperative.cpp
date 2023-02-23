@@ -1255,7 +1255,7 @@ Stmt LowererImplImperative::lowerForallDimension(Forall forall,
     Expr indexList = tempToIndexList.at(var);
     Expr indexListSize = tempToIndexListSize.at(var);
     Expr bitGuard = tempToBitGuard.at(var);
-    Expr loopVar = ir::Var::make(var.getName() + "_index_locator", taco::Int32, false, false);
+    Expr loopVar = ir::Var::make(var.getName() + "_index_locator", taco::Int(), false, false);
     Expr coordinate = getCoordinateVar(forall.getIndexVar());
 
     if (forall.getParallelUnit() != ParallelUnit::NotParallel && forall.getOutputRaceStrategy() == OutputRaceStrategy::Atomics) {
@@ -2220,7 +2220,7 @@ vector<Stmt> LowererImplImperative::codeToInitializeDenseAcceleratorArrays(Where
 
   // TODO: TACO should probably keep state on if it can use int32 or if it should switch to
   //       using int64 for indices. This assumption is made in other places of taco.
-  const Datatype indexListType = taco::Int32;
+  const Datatype indexListType = taco::Int();
   std::string indexListSuffix;
   if (parallel)
     indexListSuffix = "_index_list_all";
@@ -2245,7 +2245,7 @@ vector<Stmt> LowererImplImperative::codeToInitializeDenseAcceleratorArrays(Where
     whereToIndexListAll[where] = indexListArr;
     whereToBitGuardAll[where] = alreadySetArr;
   } else {
-    const Expr indexListSizeExpr = ir::Var::make(indexListName + "_size", taco::Int32, false, false);
+    const Expr indexListSizeExpr = ir::Var::make(indexListName + "_size", taco::Int(), false, false);
     tempToIndexList[temporary] = indexListArr;
     tempToIndexListSize[temporary] = indexListSizeExpr;
     tempToBitGuard[temporary] = alreadySetArr;
@@ -2371,7 +2371,7 @@ vector<Stmt> LowererImplImperative::codeToInitializeLocalTemporaryParallel(Where
     // Declare local index list array
     // TODO: TACO should probably keep state on if it can use int32 or if it should switch to
     //       using int64 for indices. This assumption is made in other places of taco.
-    const Datatype indexListType = taco::Int32;
+    const Datatype indexListType = taco::Int();
     const std::string indexListName = temporary.getName() + "_index_list";
     const Expr indexListArr = ir::Var::make(indexListName,
                                             indexListType,
@@ -2383,7 +2383,7 @@ vector<Stmt> LowererImplImperative::codeToInitializeLocalTemporaryParallel(Where
     decls.push_back(indexListDecl);
 
     // Declare local indexList size variable
-    const Expr indexListSizeExpr = ir::Var::make(indexListName + "_size", taco::Int32, false, false);
+    const Expr indexListSizeExpr = ir::Var::make(indexListName + "_size", taco::Int(), false, false);
 
     // Declare local already set array (bit guard)
     // TODO: emit as uint64 and manually emit bit pack code

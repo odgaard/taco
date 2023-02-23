@@ -2349,7 +2349,7 @@ template <> SuchThat to<SuchThat>(IndexStmt s) {
 // class IndexVar
 IndexVar::IndexVar() : IndexVar(util::uniqueName('i')) {}
 
-IndexVar::IndexVar(const std::string& name) : IndexVar(name, Datatype::Int32) {}
+IndexVar::IndexVar(const std::string& name) : IndexVar(name, Int()) {}
 
 IndexVar::IndexVar(const std::string& name, const Datatype& type) : IndexVar(new IndexVarNode(name, type)) {}
 

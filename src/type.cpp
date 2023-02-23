@@ -182,7 +182,7 @@ Datatype Int(int bits) {
     case 128: return Datatype(Datatype::Int128);
     default: 
       taco_ierror << bits << " bits not supported for datatype Int";
-      return Datatype(Datatype::Int32);
+      return Datatype(Datatype::Int64);
   }
 }
   

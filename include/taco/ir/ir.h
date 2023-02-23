@@ -259,7 +259,7 @@ TypedComponentVal toTypedComponentVal(T val, Datatype type) {
     case Datatype::Complex64:
     case Datatype::Complex128:
     case Datatype::UInt128:
-    case Datatype::CppType:
+    //case Datatype::CppType:
     case Datatype::Undefined:
     case Datatype::Int128:
     default:
