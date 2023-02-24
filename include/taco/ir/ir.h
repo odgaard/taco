@@ -272,6 +272,18 @@ TypedComponentVal toTypedComponentVal(std::complex<float> val, Datatype type);
 template <>
 TypedComponentVal toTypedComponentVal(std::complex<double> val, Datatype type);
 
+template< class T >
+struct TypeIsInt
+{
+    static const bool value = false;
+};
+
+template<>
+struct TypeIsInt< int >
+{
+    static const bool value = true;
+};
+
 /** A literal. */
 struct Literal : public ExprNode<Literal> {
   TypedComponentPtr value;
@@ -292,6 +304,8 @@ struct Literal : public ExprNode<Literal> {
 
   template <typename T>
   static Expr make(T val) {
+      if (TypeIsInt<T>::value)
+          return make(val, taco::Int());
     return make(val, taco::type<T>());
   }
 

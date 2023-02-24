@@ -3101,8 +3101,14 @@ Stmt LowererImplImperative::initResultArrays(vector<Access> writes,
         taco_iassert(!iterators.empty());
 
         Expr capacityVar = getCapacityVar(tensor);
+
+#ifdef TACO_DEFAULT_INTEGER_TYPE
         Expr allocSize = isValue(parentSize, 0)
                          ? DEFAULT_ALLOC_SIZE : parentSize;
+#else
+          Expr allocSize = isValue(parentSize, (int64_t)0)
+                           ? DEFAULT_ALLOC_SIZE : parentSize;
+#endif
         initArrays.push_back(VarDecl::make(capacityVar, allocSize));
         initArrays.push_back(Allocate::make(valuesArr, capacityVar, false /* is_realloc */, Expr() /* old_elements */,
                                             clearValuesAllocation));
