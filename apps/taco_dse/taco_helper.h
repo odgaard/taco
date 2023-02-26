@@ -1272,7 +1272,7 @@ public:
     taco::Tensor<double> B;
     taco::Tensor<double> c;
     taco::IndexStmt stmt;
-    taco::IndexVar f, fpos, chunk, fpos2, k1, k2, i0, i1;
+    taco::IndexVar f, fpos, chunk, fpos2, k1, k2, kpos, kpos1, kpos2, i0, i1;
     int run_mode, num_reps;
     TTV(int mode, int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
@@ -1288,7 +1288,8 @@ public:
     {
     }
     TTV() : run_mode(1), initialized{false}, cold_run{true},
-            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"), i0("i0"), i1("i1") {}
+            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"), i0("i0"), i1("i1"),
+            kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"){}
     float get_sparsity() { return (run_mode == 0) ? SPARSITY : inputCache.get_sparsity(); }
     void set_cold_run() { cold_run = true; }
     void initialize_data(int mode = RANDOM) override
@@ -1348,7 +1349,7 @@ public:
         B.pack();
         c.pack();
 
-        std::vector<taco::IndexVar> reorder_{i0, chunk, fpos2, k1, k2};
+        std::vector<taco::IndexVar> reorder_{i0, chunk, fpos2, kpos1, kpos2};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
         initialized = true;
@@ -1386,7 +1387,7 @@ public:
         result.setNeedsAssemble(false);
         result.setAssembleWhileCompute(false);
         result.compile();
-        //result.assemble();
+        // result.assemble();
         timer.start();
         result.compute();
         timer.stop();
@@ -1413,9 +1414,12 @@ public:
         return sched.split(i, i0, i1, chunk_size_i).fuse(i1, j, f)
             .pos(f, fpos, B(i,j,k))
             .split(fpos, chunk, fpos2, chunk_size_fpos)
-            .split(k, k1, k2, chunk_size_k)
+            .pos(k, kpos, B(i,j,k))
+            .split(kpos, kpos1, kpos2, chunk_size_k)
             .reorder(reorder)
-            .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+            .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
+            .parallelize(kpos2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
+
 
             // return stmt.fuse(i, j, f)
             //             .pos(f, fpos, B(i,j,k))

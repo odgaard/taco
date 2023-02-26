@@ -896,7 +896,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     int temp_omp_chunk_size = 1;
     int temp_chunk_size_i = 1;
     int temp_chunk_size_fpos = 1;
-    int temp_chunk_size_k = 1;
+    int temp_chunk_size_k = 16;
     int temp_omp_num_threads = 32;
     // default_config_time = ttv_handler->get_default_compute_time();
     ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,
