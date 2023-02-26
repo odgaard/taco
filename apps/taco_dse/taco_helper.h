@@ -282,6 +282,7 @@ public:
     taco::util::Timer timer;
     taco::IndexStmt stmt;
     taco::IndexVar i0, i1, i10, i11, kpos, kpos0, kpos1;
+    int run_mode;
     SpMV(int mode, int NUM_I = 10000, int NUM_J = 10000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                       NUM_J{NUM_J},
                                                                       SPARSITY{SPARSITY},
@@ -292,7 +293,7 @@ public:
                                                                       c("c", {NUM_J}, taco::Format{taco::ModeFormat::Dense}),
                                                                       a("a", {NUM_I}, taco::Format{taco::ModeFormat::Dense}),
                                                                       i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
-    SpMV() : initialized{false},
+    SpMV() : run_mode(1), initialized{false},
              reorder_initialized{false},
              cold_run{true},
              i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
@@ -303,13 +304,25 @@ public:
         if (initialized)
             return;
 
-        if(mode == MTX) {
-            ssTensors test;
-            std::tie(B, c) = load_tensor(test.tensors[0]);
-            std::cout << test.tensors[0] << std::endl;
-            int dim = B.getDimension(0);
-            taco::Tensor<double> c_("c_", {dim}, taco::Format{taco::ModeFormat::Dense});
-            c = c_;
+        if(matrix_name != "random") {
+            ssTensors mtxTensors;
+            int NUM_K = 2;
+            if (matrix_name == "auto") {
+                std::tie(B, c) = load_tensor(mtxTensors.tensors[0], NUM_K);
+            } else {
+                auto ssPath = std::getenv("SUITESPARSE_PATH");
+                string ssPathStr = std::string(ssPath);
+                char sep = '/';
+                std::string matrix_path;
+                if (ssPathStr[ssPathStr.length()] == sep) {
+                    matrix_path = ssPathStr + matrix_name;
+                } else {
+                    matrix_path = ssPathStr + "/" + matrix_name;
+                }
+                std::tie(B, c) = load_tensor(matrix_path, NUM_K);
+            }
+            NUM_I = B.getDimensions()[0];
+            NUM_J = B.getDimensions()[1];
         }
         else {
             srand(120);
@@ -335,17 +348,53 @@ public:
             B.pack();
         }
 
+        taco::Tensor<double> c_temp({NUM_J}, dense);
+        for (int j = 0; j < NUM_J; j++)
+        {
+            float rand_float = (float)rand() / (float)(RAND_MAX);
+            c_temp.insert({j}, (double)((int)(rand_float * 3 / SPARSITY)));
+        }
+
+        c = c_temp;
+
+        c.pack();
+        B.pack();
+
         // taco::util::Timer timer;
         // timer.start();
         // timer.stop();
         // std::cout << "Time: " << timer.getResult().mean << std::endl;
 
-        std::vector<taco::IndexVar> reorder_{i0, i1, j};
+        // std::vector<taco::IndexVar> reorder_{i0, i1, j};
+        std::vector<taco::IndexVar> reorder_{i0, i10, i11, j};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
         initialized = true;
     }
-    taco::IndexStmt schedule(std::vector<int> order, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8) {
+
+    float get_sparsity() { return (run_mode == 0) ? SPARSITY : inputCache.get_sparsity(); }
+    int get_num_i() { return NUM_I; }
+    int get_num_j() { return NUM_J; }
+
+    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int CHUNK_SIZE=16, int CHUNK_SIZE2=8, int omp_scheduling_type=0, int omp_chunk_size=1, int num_threads=32) {
+        using namespace taco;
+        std::vector<taco::IndexVar> reorder; //= get_reordering(order);
+        reorder.reserve(order.size());
+        get_reordering(reorder, order);
+        taco::taco_set_num_threads(num_threads);
+        if(omp_scheduling_type == 0) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
+        }
+        else if(omp_scheduling_type == 1) {
+            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
+        }
+        return sched.split(i, i0, i1, CHUNK_SIZE)
+            .split(i1, i10, i11, CHUNK_SIZE2)
+            .reorder(reorder)
+            .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+    }
+
+    taco::IndexStmt schedule_(std::vector<int> order, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8) {
         using namespace taco;
         if(SPLIT) {
             std::vector<taco::IndexVar> reorder = get_reordering(order);
@@ -399,7 +448,7 @@ public:
         a(i) = B(i,j) * c(j);
 
         stmt = a.getAssignment().concretize();
-        stmt = schedule(order, chunk_size, split, chunk_size2);
+        // stmt = schedule(order, chunk_size, split, chunk_size2);
     }
     void generate_schedule(int chunk_size, int split, int chunk_size2, int order) {
         a(i) = B(i,j) * c(j);
@@ -407,14 +456,17 @@ public:
         stmt = a.getAssignment().concretize();
         stmt = schedule(chunk_size, split, chunk_size2, order);
     }
-    void compute_cold_run() {
-        a.compile(stmt);
-        a.assemble();
-        a.compute();
+
+    void compute_cold_run(taco::Tensor<double> &result, taco::IndexStmt & sched) {
+        result.setAssembleWhileCompute(true);
+        result.compile(sched);
+        // result.assemble();
+        result.compute();
     }
+
     void compute(bool default_config = false) override {
         if(cold_run) {
-            compute_cold_run();
+            // compute_cold_run();
             timer.clear_cache();
             cold_run = false;
         }
@@ -434,19 +486,21 @@ public:
     }
 
     double compute_unscheduled() {
-        return 0.0f;
-        // taco::Tensor<double> result({NUM_I, NUM_K}, taco::dense);
-        // result(i) = B(i, j) * c(j);
-        // taco::util::Timer timer;
-        // result.compile();
-        // result.assemble();
-        // timer.start();
-        // result.compute();
-        // timer.stop();
-        // return timer.getResult().mean;
+        // return 0.0f;
+        taco::Tensor<double> result({NUM_I}, taco::dense);
+        result(i) = B(i, j) * c(j);
+        taco::util::Timer timer;
+        result.compile();
+        result.assemble();
+        timer.start();
+        result.compute();
+        timer.stop();
+        return timer.getResult().mean;
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+    void set_cold_run() { cold_run = true; }
+
+    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int chunk_size2, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
         result(i) = B(i,j) * c(j);
 
         // taco::Tensor<double> temp_result()
@@ -454,11 +508,12 @@ public:
         taco::IndexStmt sched = result.getAssignment().concretize();
 
         // sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
+        sched = schedule(sched, order, chunk_size, chunk_size2, omp_scheduling_type, omp_chunk_size, num_threads);
 
         if(cold_run) {
             taco::Tensor<double> temp_result({NUM_I}, taco::dense);
             for(int i = 0; i < 2; i++) {
-                // compute_cold_run(temp_result, sched);
+                compute_cold_run(temp_result, sched);
             }
             cold_run = false;
         }
@@ -468,12 +523,14 @@ public:
 
         std::vector<double> compute_times;
 
-        //result.setAssembleWhileCompute(true);
-
+        // result.setAssembleWhileCompute(true);
+        timer.clear_cache();
         result.compile(sched);
+        result.setNeedsAssemble(true);
+        // result.assemble();
         for(int i = 0; i < num_reps; i++) {
-            result.setNeedsCompute(true);
-            result.setNeedsAssemble(true);
+            // result.setNeedsCompute(true);
+            // result.setNeedsAssemble(true);
             timer.start();
             result.assemble();
             result.compute();
@@ -1370,10 +1427,10 @@ public:
         stmt = A.getAssignment().concretize();
         stmt = schedule(chunk_size, order);
     }
-    void compute_cold_run() {
-        A.compile(stmt);
-        A.assemble();
-        A.compute();
+    void compute_cold_run(taco::Tensor<double> &result, taco::IndexStmt &sched) {
+        result.compile(sched);
+        result.assemble();
+        result.compute();
     }
     int get_num_i() { return NUM_I; }
     int get_num_j() { return NUM_J; }
@@ -1413,6 +1470,7 @@ public:
             .split(k, k1, k2, chunk_size_k)
             .reorder(reorder)
             .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+            // .parallelize(k2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
 
             // return stmt.fuse(i, j, f)
             //             .pos(f, fpos, B(i,j,k))
@@ -1427,9 +1485,11 @@ public:
         //         .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
-                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
-                              int num_reps=10) {
+    void schedule_and_compute(taco::Tensor<double> &result, std::vector<int> order, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
+                              int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
+                              int num_reps=5) {
+        // taco::Tensor<double> result({NUM_I, NUM_J}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
+        // taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
         result(i, j) = B(i, j, k) * c(k);
 
         // std::cout << "Elements: " << std::endl;
@@ -1439,28 +1499,36 @@ public:
         // std::cout << std::endl;
 
         taco::IndexStmt sched = result.getAssignment().concretize();
-        std::vector<int> order_{0,1,2};
+        // std::vector<int> order_{0,1,2};
         // sched = schedule(sched, order_, chunk_size, omp_scheduling_type, omp_chunk_size, num_threads);
         sched = schedule(sched, order, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, num_threads);
 
-        // if(cold_run) {
-        //     for(int i = 0; i < 5; i++) {
-        //         // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
-        //         compute_cold_run(result, sched);
-        //     }
+        std::cout << sched <<std::endl;
+
+        if(cold_run) {
+            for(int i = 0; i < 5; i++) {
+                // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
+                compute_cold_run(result, sched);
+            }
             cold_run = false;
-        // }
+        }
 
 
-	      taco::util::Timer timer;
+        taco::util::Timer timer;
         std::vector<double> compute_times;
+
+
         timer.clear_cache();
+        result.setAssembleWhileCompute(true);
         result.compile(sched);
-        result.setNeedsAssemble(true);
-        result.assemble();
         for(int i = 0; i < num_reps; i++) {
+            std::cout << "Inside compute\n";
             timer.start();
             result.setNeedsCompute(true);
+            result.setNeedsAssemble(true);
+            std::cout << "Inside compute\n";
+            // result.assemble();
+            std::cout << "Inside compute\n";
             result.compute();
             timer.stop();
 
@@ -1503,7 +1571,7 @@ public:
     void compute(bool default_config = false) override
     {
         if(cold_run) {
-            compute_cold_run();
+            // compute_cold_run(result, sched);
             cold_run = false;
         }
         taco::util::Timer timer;
@@ -1626,7 +1694,8 @@ public:
     }
 
     double compute_unscheduled() {
-        taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, taco::dense);
+        // taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, taco::dense);
+        taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
         result(i,j,l) = B(i,j,k) * C(k,l);
         taco::util::Timer timer;
         result.compile();
@@ -1661,7 +1730,8 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
-	taco::Tensor<double> result("result", {NUM_I, NUM_J, NUM_L}, taco::dense);
+        // taco::Tensor<double> result("result", {NUM_I, NUM_J, NUM_L}, taco::dense);
+  taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
         result(i,j,l) = B(i,j,k) * C(k,l);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
