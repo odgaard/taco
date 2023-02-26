@@ -1352,7 +1352,7 @@ Tensor<T> copyNonZeroStructure(std::vector<int> resDims, Format format, Tensor<T
 
   // Double check that the result format is a prefix of the source format.
   taco_uassert(src.getFormat().getOrder() >= srcLevels);
-  taco_uassert(format.getOrder() >= src.getFormat().getOrder());
+  taco_uassert(format.getOrder() >= srcLevels);
 
   for (size_t i = 0; i < (size_t)srcLevels; i++) {
     taco_uassert(resDims[i] == src.getDimensions()[i]);

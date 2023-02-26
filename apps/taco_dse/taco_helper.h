@@ -1379,11 +1379,14 @@ public:
     int get_num_j() { return NUM_J; }
 
     double compute_unscheduled() {
-        taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J}, {taco::Sparse, taco::Sparse}, B, 2);
         result(i, j) = B(i, j, k) * c(k);
         taco::util::Timer timer;
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
+        result.setAssembleWhileCompute(false);
         result.compile();
-        result.assemble();
+        //result.assemble();
         timer.start();
         result.compute();
         timer.stop();
@@ -1430,7 +1433,7 @@ public:
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
                               std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
                               int num_reps=10) {
-        taco::Tensor<double> result("result", {NUM_I, NUM_J}, taco::dense);
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J}, {taco::Sparse, taco::Sparse}, B, 2);
         result(i, j) = B(i, j, k) * c(k);
 
         // std::cout << "Elements: " << std::endl;
@@ -1456,9 +1459,10 @@ public:
 	      taco::util::Timer timer;
         std::vector<double> compute_times;
         timer.clear_cache();
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
         result.compile(sched);
-        result.setNeedsAssemble(true);
-        result.assemble();
+//        result.assemble();
         for(int i = 0; i < num_reps; i++) {
             timer.start();
             result.setNeedsCompute(true);

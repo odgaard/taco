@@ -899,7 +899,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     int temp_chunk_size_k = 1;
     int temp_omp_num_threads = 32;
     // default_config_time = ttv_handler->get_default_compute_time();
-    ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
+    ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,
+                                      temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 5);
     ttv_handler->set_cold_run();
 
     default_config_time = ttv_handler->get_compute_time();
@@ -908,7 +909,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 
   if(!no_sched_init) {
     try{
-  	   ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+  	   ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
+                                         loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 5);
     	 ttv_handler->set_cold_run();
        double compute_time = ttv_handler->get_compute_time();
        Obj.compute_time = compute_time;
