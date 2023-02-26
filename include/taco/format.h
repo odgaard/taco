@@ -157,6 +157,16 @@ public:
   friend bool operator!=(const ModeFormat&, const ModeFormat&);
   friend std::ostream& operator<<(std::ostream&, const ModeFormat&);
 
+  template <typename T>
+  bool is() {
+    return std::dynamic_pointer_cast<const T>(this->impl) != nullptr;
+  }
+  template <typename T>
+  std::shared_ptr<const T> as() {
+    taco_iassert(this->is<T>());
+    return std::dynamic_pointer_cast<const T>(this->impl);
+  }
+
 private:
   std::shared_ptr<const ModeFormatImpl> impl;
 

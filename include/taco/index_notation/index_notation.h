@@ -1317,5 +1317,21 @@ IndexStmt generatePackStmt(TensorVar tensor,
 IndexStmt generatePackCOOStmt(TensorVar tensor, 
                               std::vector<IndexVar> indexVars, bool otherIsOnRight);
 
+// preservesNonZeroStructure returns true if the output of the input
+// stmt has the same non-zero structure as one of the inputs. If it does,
+// it populates the input NonZeroAnalyzerResult with information about
+// why the non-zero structure is preserved.
+struct NonZeroAnalyzerResult {
+    NonZeroAnalyzerResult() {}
+    NonZeroAnalyzerResult(std::unique_ptr<Access> resultAccess, std::unique_ptr<Access> inputAccess)
+            : resultAccess(std::move(resultAccess)),
+              inputAccess(std::move(inputAccess)) {}
+    // Note that these accesses are wrapped in std::unique_ptr so that
+    // we avoid issues around the overloaed operator= on Access types.
+    std::unique_ptr<Access> resultAccess;
+    std::unique_ptr<Access> inputAccess;
+};
+bool preservesNonZeroStructure(IndexStmt stmt, NonZeroAnalyzerResult& res);
+
 }
 #endif

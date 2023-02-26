@@ -974,7 +974,7 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
 
   compute_times = vector<double>();
   ttm_handler->set_cold_run();
-  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, taco::dense);
+  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense});
 
   std::vector<bool> valid_perm(120, true);
   std::vector<std::vector<int>> orders;

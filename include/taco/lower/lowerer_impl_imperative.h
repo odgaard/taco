@@ -56,7 +56,7 @@ public:
 
   /// Lower an index statement to an IR function.
   ir::Stmt lower(IndexStmt stmt, std::string name, 
-                 bool assemble, bool compute, bool pack, bool unpack);
+                 bool assemble, bool compute, bool pack, bool unpack, bool enablePreserveNonZeros=false);
 
 protected:
 
@@ -501,6 +501,7 @@ protected:
 private:
   bool assemble;
   bool compute;
+  bool enablePreserveNonZeros = false;
   bool loopOrderAllowsShortCircuit = false;
 
   std::set<TensorVar> needCompute;
@@ -599,6 +600,13 @@ private:
   class Visitor;
   friend class Visitor;
   std::shared_ptr<Visitor> visitor;
+
+  // These two fields maintain information about if the optimization
+  // to write into sparse outputs with the same non-zero structure
+  // as the input tensor is enabled.
+  bool preservesNonZeros = false;
+  NonZeroAnalyzerResult nonZeroAnalyzerResult;
+
 
 };
 

@@ -1427,9 +1427,10 @@ public:
         //         .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
+    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
                               std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
                               int num_reps=10) {
+        taco::Tensor<double> result("result", {NUM_I, NUM_J}, taco::dense);
         result(i, j) = B(i, j, k) * c(k);
 
         // std::cout << "Elements: " << std::endl;
@@ -1479,23 +1480,6 @@ public:
             default_compute_time = timer.getResult().mean;
         }
         timer.clear_cache();
-
-
-        // taco::util::Timer timer;
-        // timer.clear_cache();
-        // result.setAssembleWhileCompute(true);
-        //result.compile(sched);
-	//result.setNeedsAssemble(true);
-        // result.assemble();
-        // timer.start();
-        // result.compute();
-        // timer.stop();
-
-        // compute_time = timer.getResult().mean;
-        // if(default_config) {
-        //    default_compute_time = timer.getResult().mean;
-        // }
-        // timer.clear_cache();
 
 
     }
@@ -1626,11 +1610,14 @@ public:
     }
 
     double compute_unscheduled() {
-        taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, taco::dense);
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
         result(i,j,l) = B(i,j,k) * C(k,l);
         taco::util::Timer timer;
+        result.setPreserveNonZero(true);
+        result.setAssembleWhileCompute(false);
+        result.setNeedsAssemble(false);
         result.compile();
-        result.assemble();
+//        result.assemble();
         timer.start();
         result.compute();
         timer.stop();
@@ -1661,7 +1648,7 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
-	taco::Tensor<double> result("result", {NUM_I, NUM_J, NUM_L}, taco::dense);
+	      taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
         result(i,j,l) = B(i,j,k) * C(k,l);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
@@ -1680,11 +1667,15 @@ public:
         taco::util::Timer timer;
         std::vector<double> compute_times;
         timer.clear_cache();
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
         result.compile(sched);
-        result.setNeedsAssemble(true);
-        result.assemble();
+
+//        result.assemble();
         for(int i = 0; i < num_reps; i++) {
             timer.start();
+            result.setPreserveNonZero(true);
+
             result.setNeedsCompute(true);
             result.compute();
             timer.stop();
