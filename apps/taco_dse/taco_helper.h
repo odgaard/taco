@@ -281,7 +281,7 @@ public:
     taco::Tensor<double> a;
     taco::util::Timer timer;
     taco::IndexStmt stmt;
-    taco::IndexVar i0, i1, i10, i11, kpos, kpos0, kpos1;
+    taco::IndexVar i0, i1, i10, i11, kpos, kpos0, kpos1, j0, j1;
     int run_mode;
     SpMV(int mode, int NUM_I = 10000, int NUM_J = 10000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                       NUM_J{NUM_J},
@@ -296,7 +296,7 @@ public:
     SpMV() : run_mode(1), initialized{false},
              reorder_initialized{false},
              cold_run{true},
-             i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
+             i0("i0"), i1("i1"), i10("i10"), i11("i11"), j0("j0"), j1("j1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
     void initialize_data(int mode = RANDOM) override
     {
         using namespace taco;
@@ -366,7 +366,7 @@ public:
         // std::cout << "Time: " << timer.getResult().mean << std::endl;
 
         // std::vector<taco::IndexVar> reorder_{i0, i1, j};
-        std::vector<taco::IndexVar> reorder_{i0, i10, i11, j};
+        std::vector<taco::IndexVar> reorder_{i0, i10, i11, j1, j0};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
         initialized = true;
@@ -376,7 +376,7 @@ public:
     int get_num_i() { return NUM_I; }
     int get_num_j() { return NUM_J; }
 
-    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int CHUNK_SIZE=16, int CHUNK_SIZE2=8, int omp_scheduling_type=0, int omp_chunk_size=1, int num_threads=32) {
+    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int CHUNK_SIZE=16, int CHUNK_SIZE2=8, int CHUNK_SIZE3=8, int omp_scheduling_type=0, int omp_chunk_size=1, int num_threads=32) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
@@ -390,8 +390,10 @@ public:
         }
         return sched.split(i, i0, i1, CHUNK_SIZE)
             .split(i1, i10, i11, CHUNK_SIZE2)
+            .split(j, j0, j1, CHUNK_SIZE3)
             .reorder(reorder)
-            .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
+            .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
+            .parallelize(j1, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
     }
 
     taco::IndexStmt schedule_(std::vector<int> order, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8) {
@@ -500,15 +502,20 @@ public:
 
     void set_cold_run() { cold_run = true; }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int chunk_size2, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int chunk_size2, int chunk_size3, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
         result(i) = B(i,j) * c(j);
 
         // taco::Tensor<double> temp_result()
 
+        // std::cout << "Inside schedule and compute" << std::endl;
+        // for(int l : order) {
+        //     std::cout << l << " ";
+        // }
+        std::cout << "computing\n";
         taco::IndexStmt sched = result.getAssignment().concretize();
 
         // sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
-        sched = schedule(sched, order, chunk_size, chunk_size2, omp_scheduling_type, omp_chunk_size, num_threads);
+        sched = schedule(sched, order, chunk_size, chunk_size2, chunk_size3, omp_scheduling_type, omp_chunk_size, num_threads);
 
         if(cold_run) {
             taco::Tensor<double> temp_result({NUM_I}, taco::dense);
@@ -529,7 +536,7 @@ public:
         result.setNeedsAssemble(true);
         // result.assemble();
         for(int i = 0; i < num_reps; i++) {
-            // result.setNeedsCompute(true);
+            result.setNeedsCompute(true);
             // result.setNeedsAssemble(true);
             timer.start();
             result.assemble();
