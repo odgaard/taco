@@ -1336,7 +1336,7 @@ int main(int argc, char **argv) {
   int omp_chunk_size = program.get<int>("--omp_chunk_size");
   bool Predictor = false;
   if (test_name == "TTV" || test_name == "MTTKRP" || test_name == "TTM") {
-    Predictor = false;
+    Predictor = true;
   }
 
   std::string log_file_ = "hypermapper_taco_log.csv";
