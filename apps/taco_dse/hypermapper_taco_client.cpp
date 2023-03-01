@@ -846,9 +846,9 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
-  int NUM_I = 10000;
-  int NUM_J = 10000;
-  int NUM_K = 1000;
+  int NUM_I = 1000;
+  int NUM_J = 100;
+  int NUM_K = 100;
 
   std::vector<double> compute_times;
 
@@ -858,7 +858,11 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     cout << "INITIALIZING" << endl;
     ttv_handler = new TTV();
     ttv_handler->matrix_name = matrix_name;
-    ttv_handler->initialize_data(1);
+    ttv_handler->SPARSITY = 0.1;
+    ttv_handler->NUM_I = NUM_I;
+    ttv_handler->NUM_J = NUM_J;
+    ttv_handler->NUM_K = NUM_K;
+    ttv_handler->initialize_data(0);
     initialized = true;
     // sparsity = ttv_handler->get_sparsity();
     num_i = ttv_handler->NUM_I;
@@ -894,10 +898,10 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     // int temp_unroll_factor = 8;
     std::vector<int> temp_loop_ordering{0,1,2,3,4};
     int temp_omp_scheduling_type = 0;
-    int temp_omp_chunk_size = 1;
-    int temp_chunk_size_i = 1;
-    int temp_chunk_size_fpos = 1;
-    int temp_chunk_size_k = 8;
+    int temp_omp_chunk_size = 16;
+    int temp_chunk_size_i = 16;
+    int temp_chunk_size_fpos = 16;
+    int temp_chunk_size_k = 16;
     int temp_omp_num_threads = 32;
     // default_config_time = ttv_handler->get_default_compute_time();
     ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,

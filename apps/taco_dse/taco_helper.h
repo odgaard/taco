@@ -170,7 +170,7 @@ struct UfuncInputCache {
   }
 
   template<typename U>
-  taco::Tensor<double> getTensor(std::string path, U format, bool countNNZ = false, float sparsity=0.3, int num_k = 1000, bool includeThird = false) {
+  taco::Tensor<double> getTensor(std::string path, U format, bool shift_dim=false, bool countNNZ = false, float sparsity=0.3, int num_k = 1000, bool includeThird = false) {
     // See if the paths match.
     if (this->lastPath == path) {
       // TODO (rohany): Not worrying about whether the format was the same as what was asked for.
@@ -190,6 +190,17 @@ struct UfuncInputCache {
     this->num_i = this->inputTensor.getDimensions()[0];
     this->num_j = this->inputTensor.getDimensions()[1];
     this->num_k = this->inputTensor.getDimensions()[2];
+
+    int last_dim = 0;
+    if (shift_dim) {
+        last_dim = this->inputTensor.getDimensions()[3];
+    }
+
+    taco::Tensor<double> copy("test", {this->num_i, this->num_k, last_dim}, taco::Sparse);
+
+    // for (auto component : this->inputTensor) {
+
+    // }
 
     if (countNNZ) {
       this->nnz = 0;
@@ -1302,39 +1313,46 @@ public:
             return;
 
         srand(9536);
-        // for (int i = 0; i < NUM_I; i++)
-        // {
-        //     for (int j = 0; j < NUM_J; j++)
-        //     {
-        //         for (int k = 0; k < NUM_K; k++)
-        //         {
-        //             float rand_float = (float)rand() / (float)(RAND_MAX);
-        //             if (rand_float < SPARSITY)
-        //             {
-        //                 B.insert({i, j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
-        //             }
-        //         }
-        //     }
-        // }
 
-        auto ssPath = std::getenv("FROST_PATH");
-        if(ssPath == nullptr) {
-            std::cout << "Environment variable FROST_PATH not set\n";
-        }
-        std::string ssPathStr = std::string(ssPath);
-
-        char sep = '/';
-        std::string matrix_path;
-        if (ssPathStr[ssPathStr.length()] == sep) {
-            matrix_path = ssPathStr + matrix_name;
-        } else {
-            matrix_path = ssPathStr + "/" + matrix_name;
+        if (mode == RANDOM) {
+            taco::Tensor<double> res("res", {NUM_I, NUM_J, NUM_K}, taco::Sparse);
+            B = res;
+            for (int i = 0; i < NUM_I; i++)
+                {
+                    for (int j = 0; j < NUM_J; j++)
+                        {
+                            for (int k = 0; k < NUM_K; k++)
+                                {
+                                    float rand_float = (float)rand() / (float)(RAND_MAX);
+                                    if (rand_float < SPARSITY)
+                                        {
+                                            B.insert({i, j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
+                                        }
+                                }
+                        }
+                }
         }
 
-        B = inputCache.getTensor(matrix_path, Sparse, true);
-        NUM_I = inputCache.num_i;
-        NUM_J = inputCache.num_j;
-        NUM_K = inputCache.num_k;
+        else {
+            auto ssPath = std::getenv("FROST_PATH");
+            if(ssPath == nullptr) {
+                std::cout << "Environment variable FROST_PATH not set\n";
+            }
+            std::string ssPathStr = std::string(ssPath);
+
+            char sep = '/';
+            std::string matrix_path;
+            if (ssPathStr[ssPathStr.length()] == sep) {
+                matrix_path = ssPathStr + matrix_name;
+            } else {
+                matrix_path = ssPathStr + "/" + matrix_name;
+            }
+
+            B = inputCache.getTensor(matrix_path, Sparse, true);
+            NUM_I = inputCache.num_i;
+            NUM_J = inputCache.num_j;
+            NUM_K = inputCache.num_k;
+        }
 
         std::cout << "Dimensions: " << NUM_I << ", " << NUM_J << ", " << NUM_K << std::endl;
 
