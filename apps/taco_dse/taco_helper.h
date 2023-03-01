@@ -1314,6 +1314,7 @@ public:
 
         srand(9536);
 
+        int nnz = 0;
         if (mode == RANDOM) {
             taco::Tensor<double> res("res", {NUM_I, NUM_J, NUM_K}, taco::Sparse);
             B = res;
@@ -1327,6 +1328,7 @@ public:
                                     if (rand_float < SPARSITY)
                                         {
                                             B.insert({i, j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
+                                            nnz++;
                                         }
                                 }
                         }
@@ -1355,6 +1357,7 @@ public:
         }
 
         std::cout << "Dimensions: " << NUM_I << ", " << NUM_J << ", " << NUM_K << std::endl;
+        std::cout << "NNZ: " << nnz << std::endl;
 
         taco::Tensor<double> c_("c", {NUM_K}, taco::Format{taco::ModeFormat::Dense});
         c = c_;
