@@ -887,6 +887,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool default_config = (chunk_size_i == 16);
   bool valid = true;
+  Obj.valid = valid;
 
   compute_times = vector<double>();
   ttv_handler->set_cold_run();
