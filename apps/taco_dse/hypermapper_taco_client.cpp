@@ -874,7 +874,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
       timer = ttv_handler->compute_unscheduled();
       compute_times.push_back(timer);
     }
-    Obj.compute_time = median(compute_times);
+    // Obj.compute_time = median(compute_times);
+    no_sched_time = median(compute_times);
     no_sched_init = true;
     cout << "computed unscheduled" << endl;
   }
@@ -896,7 +897,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     int temp_omp_chunk_size = 1;
     int temp_chunk_size_i = 1;
     int temp_chunk_size_fpos = 1;
-    int temp_chunk_size_k = 16;
+    int temp_chunk_size_k = 8;
     int temp_omp_num_threads = 32;
     // default_config_time = ttv_handler->get_default_compute_time();
     ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,
@@ -904,6 +905,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     ttv_handler->set_cold_run();
 
     default_config_time = ttv_handler->get_compute_time();
+    Obj.compute_time = default_config_time;
     logger << ttv_handler->get_num_i() << "," << ttv_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
   }
 
