@@ -1465,6 +1465,8 @@ public:
         timer.clear_cache();
         result.setPreserveNonZero(true);
         result.setNeedsAssemble(false);
+	result.setNeedsCompile(true);
+	std::cout << "Compile here" << std::endl;
         result.compile(sched);
 //        result.assemble();
         for(int i = 0; i < num_reps; i++) {
@@ -1624,6 +1626,7 @@ public:
         result.setPreserveNonZero(true);
         result.setAssembleWhileCompute(false);
         result.setNeedsAssemble(false);
+        result.setNeedsCompile(true);
         result.compile();
 //        result.assemble();
         timer.start();
@@ -1656,7 +1659,7 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
-	      taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
+	taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
         result(i,j,l) = B(i,j,k) * C(k,l);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
@@ -1677,7 +1680,8 @@ public:
         timer.clear_cache();
         result.setPreserveNonZero(true);
         result.setNeedsAssemble(false);
-        result.compile(sched);
+        result.setNeedsCompile(true);
+	result.compile(sched);
 
 //        result.assemble();
         for(int i = 0; i < num_reps; i++) {

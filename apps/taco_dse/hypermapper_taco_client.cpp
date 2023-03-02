@@ -880,6 +880,106 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     cout << "computed unscheduled" << endl;
   }
 
+  //  TTV Single Point
+//  taco::Tensor<double> temp_result = copyNonZeroStructure({ttv_handler->NUM_I, ttv_handler->NUM_J}, {taco::Sparse, taco::Sparse}, ttv_handler->B, 2);
+//  std::vector<bool> valid_perm(120, true);
+//  std::vector<std::vector<int>> orders;
+//  bool valid_order = false;
+//  std::vector<int> loop_order = {2, 4, 1, 0, 3};
+//      try {
+//        ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 1);
+//        valid_order = true;
+//      } catch (const taco::TacoException& err) {
+//        std::cout << "Failed\n";
+//        compute_times.push_back(10000.0f);
+//        valid_order = false;
+//      }
+//    for(int l : loop_order) {
+//      std::cout << l << " ";
+//    }
+//    std::cout << ": " <<  std::boolalpha << valid_order << std::endl;
+//
+//  loop_order = {2, 4, 0, 3, 1};
+//      try {
+//        ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 1);
+//        valid_order = true;
+//      } catch (const taco::TacoException& err) {
+//        std::cout << "Failed\n";
+//        compute_times.push_back(10000.0f);
+//        valid_order = false;
+//      }
+//    for(int l : loop_order) {
+//      std::cout << l << " ";
+//    }
+//    std::cout << ": " <<  std::boolalpha << valid_order << std::endl;
+//  loop_order = {2, 4, 0, 1, 3};
+//      try {
+//        ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 1);
+//        valid_order = true;
+//      } catch (const taco::TacoException& err) {
+//        std::cout << "Failed\n";
+//        compute_times.push_back(10000.0f);
+//        valid_order = false;
+//      }
+//    for(int l : loop_order) {
+//      std::cout << l << " ";
+//    }
+//    std::cout << ": " <<  std::boolalpha << valid_order << std::endl;
+  
+//  EXH SEARCH TTV
+//  std::vector<bool> valid_perm;
+//  std::vector<std::vector<int>> orders;
+//  loop_ordering = vector<int>{0, 1, 2, 3,4};
+//  bool valid_order = false;
+//  int counter = 0;
+//  int num_right = 0;
+//  // taco::Tensor<double> temp_result({spmv_handler->NUM_I}, taco::dense);
+//  do {
+//    // taco::Tensor<double> temp_result_({spmv_handler->NUM_I}, taco::dense);
+//    taco::Tensor<double> temp_result = copyNonZeroStructure({ttv_handler->NUM_I, ttv_handler->NUM_J}, {taco::Sparse, taco::Sparse}, ttv_handler->B, 2);
+//    std::vector<int> loop_order = loop_ordering;
+//    for(int l : loop_ordering) {
+//      std::cout << l << " ";
+//    }
+//    std::cout << "looporder ";
+//      try {
+//        ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 1);
+//        valid_order = true;
+//	compute_times.push_back(ttv_handler->get_compute_time());
+//        num_right++;
+//        // valid_perm.push_back(valid_order);
+//      } catch (const taco::TacoException& err) {
+//        std::cout << "Failed\n";
+//        compute_times.push_back(10000.0f);
+//        valid_order = false;
+//        // valid_perm.push_back(valid_order);
+//        // break;
+//      }
+//      valid_perm.push_back(valid_order);
+//    for(int l : loop_order) {
+//      std::cout << l << " ";
+//    }
+//    std::cout << " looporder ";
+//      std::cout << std::boolalpha << valid_order << std::endl;
+//      orders.push_back(loop_ordering);
+//    // valid_perm.push_back(valid_order);
+//    counter++;
+//  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+//
+//
+//  int count = 0;
+//  for(auto l : orders) {
+//    for(auto index : l) {
+//      std::cout << index << " ";
+//    }
+//    std::cout << "| " << valid_perm[count];
+//    std::cout << std::endl;
+//    count++;
+//  }
+//
+//  std::cout << "Number correct: " << num_right << std::endl;
+//  exit(1);
+
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool default_config = (chunk_size_i == 16);
   bool valid = true;
@@ -972,7 +1072,60 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
     Obj.compute_time = median(compute_times);
     no_sched_init = true;
   }
-  cout << "a" << endl;
+
+  // TTM Exh Search
+  std::vector<bool> valid_perm;
+  std::vector<std::vector<int>> orders;
+  loop_ordering = vector<int>{0, 1, 2, 3,4};
+  bool valid_order = false;
+  int counter = 0;
+  int num_right = 0;
+  do {
+    taco::Tensor<double> temp_result = copyNonZeroStructure({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, ttm_handler->B, 2);
+    std::vector<int> loop_order = loop_ordering;
+    for(int l : loop_ordering) {
+      std::cout << l << " ";
+    }
+    std::cout << "looporder ";
+      try {
+        ttm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 1);
+        valid_order = true;
+	compute_times.push_back(ttm_handler->get_compute_time());
+        num_right++;
+        // valid_perm.push_back(valid_order);
+      } catch (const taco::TacoException& err) {
+        std::cout << "Failed\n";
+        compute_times.push_back(10000.0f);
+        valid_order = false;
+        // valid_perm.push_back(valid_order);
+        // break;
+      }
+      valid_perm.push_back(valid_order);
+    for(int l : loop_order) {
+      std::cout << l << " ";
+    }
+    std::cout << " looporder ";
+      std::cout << std::boolalpha << valid_order << std::endl;
+      orders.push_back(loop_ordering);
+    // valid_perm.push_back(valid_order);
+    counter++;
+  } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
+
+
+  int count = 0;
+  for(auto l : orders) {
+    for(auto index : l) {
+      std::cout << index << " ";
+    }
+    std::cout << "| " << valid_perm[count];
+    std::cout << std::endl;
+    count++;
+  }
+
+  std::cout << "Number correct: " << num_right << std::endl;
+
+  exit(1);
+
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool default_config = (chunk_size == 16);
 

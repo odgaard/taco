@@ -666,6 +666,8 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   IndexStmt stmtToCompile = stmt.concretize();
   stmtToCompile = scalarPromote(stmtToCompile);
 
+  std::cout << stmt << "\n" << stmtToCompile << std::endl;
+
   if (!std::getenv("CACHE_KERNELS") ||
       std::string(std::getenv("CACHE_KERNELS")) != "0") {
     concretizedAssign = stmtToCompile;
@@ -694,6 +696,7 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   content->module->addFunction(content->computeFunc);
   content->module->compile();
   cacheComputeKernel(concretizedAssign, content->module);
+
 }
 
 taco_tensor_t* TensorBase::getTacoTensorT() {

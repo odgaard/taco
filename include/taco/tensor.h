@@ -504,6 +504,7 @@ public:
   void setNeedsCompute(bool needsCompute);
   void setNeedsAssemble(bool needsAssemble);
   void setPreserveNonZero(bool preserveNonZero);
+  void setNeedsCompile(bool needsCompile);
 private:
   static std::shared_ptr<ir::Module> getHelperFunctions(
       const Format& format, Datatype ctype, const std::vector<int>& dimensions);
@@ -516,7 +517,7 @@ private:
 
   void unsetNeverPacked();
   void setNeedsPack(bool needsPack);
-  void setNeedsCompile(bool needsCompile);
+//  void setNeedsCompile(bool needsCompile);
   // void setNeedsAssemble(bool needsAssemble);
   // void setNeedsCompute(bool needsCompute);
 
