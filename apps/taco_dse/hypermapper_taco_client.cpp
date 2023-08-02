@@ -185,10 +185,6 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 
   HMScenario["output_data_file"] =
       OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
-  HMScenario["output_pareto_file"] =
-      OutputFoldername + "/" + AppName + "_output_pareto.csv";
-  HMScenario["output_image"]["output_image_pdf_file"] =
-      OutputFoldername + "_" + AppName + "_output_image.pdf";
 
   // save the completed json file in the output directory
   ofstream HyperMapperScenarioFile;
@@ -998,9 +994,9 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
-  int NUM_I = 10000;
-  int NUM_J = 10000;
-  int NUM_K = 1000;
+  int NUM_I = 1000;
+  int NUM_J = 100;
+  int NUM_K = 100;
 
   std::vector<double> compute_times;
 
@@ -1010,7 +1006,11 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     cout << "INITIALIZING" << endl;
     ttv_handler = new TTV();
     ttv_handler->matrix_name = matrix_name;
-    ttv_handler->initialize_data(1);
+    ttv_handler->SPARSITY = 0.1;
+    ttv_handler->NUM_I = NUM_I;
+    ttv_handler->NUM_J = NUM_J;
+    ttv_handler->NUM_K = NUM_K;
+    ttv_handler->initialize_data(0);
     initialized = true;
     // sparsity = ttv_handler->get_sparsity();
     num_i = ttv_handler->NUM_I;
@@ -1026,7 +1026,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
       timer = ttv_handler->compute_unscheduled();
       compute_times.push_back(timer);
     }
-    Obj.compute_time = median(compute_times);
+    // Obj.compute_time = median(compute_times);
+    no_sched_time = median(compute_times);
     no_sched_init = true;
     cout << "computed unscheduled" << endl;
   }
@@ -1034,6 +1035,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool default_config = (chunk_size_i == 16);
   bool valid = true;
+  Obj.valid = valid;
 
   compute_times = vector<double>();
   ttv_handler->set_cold_run();
@@ -1046,16 +1048,18 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     // int temp_unroll_factor = 8;
     std::vector<int> temp_loop_ordering{0,1,2,3,4};
     int temp_omp_scheduling_type = 0;
-    int temp_omp_chunk_size = 1;
-    int temp_chunk_size_i = 1;
-    int temp_chunk_size_fpos = 1;
-    int temp_chunk_size_k = 1;
+    int temp_omp_chunk_size = 16;
+    int temp_chunk_size_i = 16;
+    int temp_chunk_size_fpos = 16;
+    int temp_chunk_size_k = 16;
     int temp_omp_num_threads = 32;
     // default_config_time = ttv_handler->get_default_compute_time();
-    ttv_handler->schedule_and_compute(temp_result, temp_loop_ordering, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,  temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
+    ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,
+                                      temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 5);
     ttv_handler->set_cold_run();
 
     default_config_time = ttv_handler->get_compute_time();
+    Obj.compute_time = default_config_time;
     logger << ttv_handler->get_num_i() << "," << ttv_handler->get_num_j() << "," << default_config_time << "," << no_sched_time << std::endl;
   }
 
@@ -1063,7 +1067,8 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     std::cout << "NUM_I: " << ttv_handler->NUM_I << ", NUM_J: " << ttv_handler->NUM_J << std::endl;
     taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
     try{
-  	   ttv_handler->schedule_and_compute(temp_result, loop_ordering, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
+  	   ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
+                                         loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 5);
     	 ttv_handler->set_cold_run();
        double compute_time = ttv_handler->get_compute_time();
        Obj.compute_time = compute_time;
@@ -1129,7 +1134,7 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
 
   compute_times = vector<double>();
   ttm_handler->set_cold_run();
-  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
+  taco::Tensor<double> temp_result({ttm_handler->NUM_I, ttm_handler->NUM_J, ttm_handler->NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense});
 
   std::vector<bool> valid_perm(120, true);
   std::vector<std::vector<int>> orders;
@@ -1489,7 +1494,7 @@ int main(int argc, char **argv) {
   int omp_chunk_size = program.get<int>("--omp_chunk_size");
   bool Predictor = false;
   if (test_name == "TTV" || test_name == "MTTKRP" || test_name == "TTM") {
-    Predictor = false;
+    Predictor = true;
   }
 
   std::string log_file_ = "hypermapper_taco_log.csv";

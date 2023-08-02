@@ -32,6 +32,12 @@ void ASSERT_STORAGE_EQ(TensorStorage expected, TensorStorage actual) {
   ASSERT_TRUE(equals(expected, actual));
 }
 
+void ASSERT_TENSOR_EQ_INT64(TensorBase expected, TensorBase actual) {
+  SCOPED_TRACE(string("expected: ") + util::toString(expected));
+  SCOPED_TRACE(string("  actual: ") + util::toString(actual));
+  ASSERT_TRUE(equalsInt64(expected, actual));
+}
+
 void ASSERT_TENSOR_EQ(TensorBase expected, TensorBase actual) {
   SCOPED_TRACE(string("expected: ") + util::toString(expected));
   SCOPED_TRACE(string("  actual: ") + util::toString(actual));

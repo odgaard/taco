@@ -2249,3 +2249,107 @@ TEST(scheduling_eval, DISABLED_bfsPullScheduled) {
   expected.compute();
   ASSERT_TENSOR_EQ(expected, y);
 }
+
+TEST(hypermapper, TTM_unsched) {
+  if (should_use_CUDA_codegen()) {
+    return;
+  }
+  int NUM_I = 4;
+  int NUM_J = 4;
+  int NUM_K = 4;
+  int NUM_L = 4;
+  float SPARSITY = .1;
+  Tensor<double> A("A", {NUM_I, NUM_J, NUM_L}, {Dense, Dense, Dense}); // TODO: change to sparse outputs
+  Tensor<double> B("B", {NUM_I, NUM_J, NUM_K}, {Sparse, Sparse, Sparse});
+  Tensor<double> C("C", {NUM_K, NUM_L}, {Dense, Dense});
+
+  srand(935);
+  for (int i = 0; i < NUM_I; i++) {
+    for (int j = 0; j < NUM_J; j++) {
+      for (int k = 0; k < NUM_K; k++) {
+        float rand_float = (float) rand() / (float) (RAND_MAX);
+        if (rand_float < SPARSITY) {
+          B.insert({i, j, k}, (double) ((int) (i)));
+        }
+      }
+    }
+  }
+
+  for (int k = 0; k < NUM_K; k++) {
+    for (int l = 0; l < NUM_L; l++) {
+      float rand_float = (float)rand()/(float)(RAND_MAX);
+      C.insert({k, l}, (double) ((int) (l)));
+    }
+  }
+
+  B.pack();
+  C.pack();
+
+  Tensor<double> result("result",{NUM_I, NUM_J, NUM_L}, {Sparse, Sparse, Dense});
+  result(i,j,l) = B(i,j,k) * C(k,l);
+  result.setPreserveNonZero(true);
+  result.compile();
+  result.assemble();
+  result.compute();
+
+  std::cout << "RESULT: " << result << std::endl;
+
+  A(i,j,l) = B(i,j,k) * C(k, l);
+  A.compile();
+  A.assemble();
+  A.compute();
+  std::cout << "A: " << A << std::endl;
+  ASSERT_TENSOR_EQ_INT64(A, result);
+}
+
+TEST(hypermapper, TTM_unsched_copy) {
+  if (should_use_CUDA_codegen()) {
+    return;
+  }
+  int NUM_I = 4;
+  int NUM_J = 4;
+  int NUM_K = 4;
+  int NUM_L = 4;
+  float SPARSITY = .1;
+  Tensor<double> A("A", {NUM_I, NUM_J, NUM_L}, {Dense, Dense, Dense}); // TODO: change to sparse outputs
+  Tensor<double> B("B", {NUM_I, NUM_J, NUM_K}, {Sparse, Sparse, Sparse});
+  Tensor<double> C("C", {NUM_K, NUM_L}, {Dense, Dense});
+
+  srand(935);
+  for (int i = 0; i < NUM_I; i++) {
+    for (int j = 0; j < NUM_J; j++) {
+      for (int k = 0; k < NUM_K; k++) {
+        float rand_float = (float) rand() / (float) (RAND_MAX);
+        if (rand_float < SPARSITY) {
+          B.insert({i, j, k}, (double) ((int) (i)));
+        }
+      }
+    }
+  }
+
+  for (int k = 0; k < NUM_K; k++) {
+    for (int l = 0; l < NUM_L; l++) {
+      float rand_float = (float)rand()/(float)(RAND_MAX);
+      C.insert({k, l}, (double) ((int) (l)));
+    }
+  }
+
+  B.pack();
+  C.pack();
+
+  std::vector<int> dims = {NUM_I, NUM_J, NUM_L};
+  Tensor<double> result = copyNonZeroStructure(dims, {Sparse, Sparse, Dense}, B, 2);
+  result(i,j,l) = B(i,j,k) * C(k,l);
+  result.setPreserveNonZero(true);
+  result.compile();
+  result.compute();
+
+  std::cout << "RESULT: " << result << std::endl;
+
+  A(i,j,l) = B(i,j,k) * C(k, l);
+  A.compile();
+  A.assemble();
+  A.compute();
+  std::cout << "A: " << A << std::endl;
+  ASSERT_TENSOR_EQ_INT64(A, result);
+}
