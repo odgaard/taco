@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <map>
 
 template <class T> class HMInputParam;
 void fatalError(const std::string &msg);
@@ -13,48 +14,27 @@ void fatalError(const std::string &msg);
 enum ParamType { Real, Integer, Ordinal, Categorical, Permutation };
 enum DataType { Int, Float, IntVector };
 
-std::ostream &operator<<(std::ostream &out, const ParamType &PT) {
-  switch (PT) {
-    case Real:
-      out << "Real";
-      break;
-    case Integer:
-      out << "Integer";
-      break;
-    case Ordinal:
-      out << "Ordinal";
-      break;
-    case Categorical:
-      out << "Categorical";
-      break;
-    case Permutation:
-      out << "Permutation";
-      break;
-  }
-  return out;
+std::string getTypeAsString(const ParamType &PT) {
+  static const std::map<ParamType, std::string> typeStrings = {
+    {Real, "real"},
+    {Integer, "integer"},
+    {Ordinal, "ordinal"},
+    {Categorical, "categorical"},
+    {Permutation, "permutation"}
+  };
+  return typeStrings.at(PT);
 }
 
-std::string getTypeAsString(const ParamType &PT) {
-  std::string TypeString;
-  switch (PT) {
-  case Real:
-    TypeString = "real";
-    break;
-  case Integer:
-    TypeString = "integer";
-    break;
-  case Ordinal:
-    TypeString = "ordinal";
-    break;
-  case Categorical:
-    TypeString = "categorical";
-    break;
-  case Permutation:
-    TypeString = "permutation";
-    break;
-  }
-
-  return TypeString;
+std::ostream &operator<<(std::ostream &out, const ParamType &PT) {
+  static const std::map<ParamType, std::string> typeStrings = {
+    {Real, "Real"},
+    {Integer, "Integer"},
+    {Ordinal, "Ordinal"},
+    {Categorical, "Categorical"},
+    {Permutation, "Permutation"}
+  };
+  out << typeStrings.at(PT);
+  return out;
 }
 
 class HMInputParamBase {
@@ -70,8 +50,6 @@ public:
                    DataType _DType = DataType::Int)
       : Name(_Name), Key(_Name), Type(_Type),
         DType(_DType) {}
-
-      // : Name(_Name), Key("x" + std::to_string(count++)), Type(_Type),
   virtual ~HMInputParamBase(){}
 
   std::string getName() const { return Name; }
@@ -86,19 +64,11 @@ public:
   void setDType( DataType _DType) {DType = _DType;}
 
   bool operator==(const std::string &_Key) {
-    if (Key == _Key) {
-      return true;
-    } else {
-      return false;
-    }
+    return Key == _Key;
   }
 
   bool operator==(const HMInputParamBase &IP) {
-    if (Key == IP.getKey()) {
-      return true;
-    } else {
-      return false;
-    }
+    return Key == IP.getKey();
   }
 
   void print () {
@@ -127,90 +97,70 @@ inline int factorial(int n) {
     return fact;
 }
 
-template <class T> class LoopReordering {
+template <typename T>
+class LoopReordering {
 private:
   std::vector<T> reorder;
-  // std::vector< std::vector<T> > permutations;
-  // T** permutations;
-  int **permutations;
-  int *index_arr;
+  std::vector<std::vector<int>> permutations;
   int num_orderings;
+
 public:
-  // TODO: Can't seem to work for IndexVar directly
   LoopReordering(std::vector<T> &_reorder)
-    : reorder(_reorder), num_orderings(factorial(reorder.size())) {
-    // permutations = new T*[num_orderings];
-    permutations = new int*[num_orderings];
-    index_arr = new int[num_orderings];
-    for(int i = 0; i < num_orderings; i++) {
-      // permutations[i] = new T[reorder.size()];
-      permutations[i] = new int[reorder.size()];
-      index_arr[i] = i;
-    }
-    // std::cout << "num_orders: " << num_orderings << std::endl;
+      : reorder(_reorder), num_orderings(factorial(static_cast<int>(reorder.size()))) {
+    compute_permutations();
   }
-  ~LoopReordering() {
-    // TODO: Figure out how to properly clear memory
-    delete [] index_arr;
-    for(int i = 0; i < num_orderings; i++) {
-      if(permutations[i])
-        delete [] permutations[i];
+
+  ~LoopReordering() {}
+
+  static int factorial(int n) {
+    int fact = 1;
+    for (int i = 2; i <= n; ++i) {
+      fact *= i;
     }
-    if(permutations)
-      delete [] permutations;
+    return fact;
   }
 
   void compute_permutations() {
-    int count = 0;
-    int reorder_size = reorder.size();
-    std::sort(index_arr, index_arr + reorder_size);
+    std::vector<int> index_arr(reorder.size());
+    std::iota(index_arr.begin(), index_arr.end(), 0);
+    permutations.reserve(num_orderings);
+
     do {
-      memcpy((void *)permutations[count], (void *)index_arr, reorder_size * sizeof(int));
-      count++;
-    } while(std::next_permutation(index_arr, index_arr + reorder_size));
+      permutations.push_back(index_arr);
+    } while (std::next_permutation(index_arr.begin(), index_arr.end()));
   }
 
-  int get_num_reorderings() { return num_orderings; }
+  int get_num_reorderings() const { return num_orderings; }
 
   std::vector<T> get_reordering(int index) {
-    if(index > num_orderings) {
+    if (index >= num_orderings) {
       std::cerr << "Invalid index entered!" << std::endl;
       exit(1);
     }
-    std::vector<T> temp;
 
-    int size = static_cast<int>(reorder.size());
-    int index_ptr;
-    for(int i = 0; i < size; i++){
-      index_ptr = permutations[index][i];
-      temp.push_back(reorder[index_ptr]);
+    std::vector<T> temp;
+    for (int i : permutations[index]) {
+      temp.push_back(reorder[i]);
     }
     return temp;
   }
 
   void get_reordering(std::vector<T>& temp, std::vector<int> reordering) {
-    int size = static_cast<int>(reordering.size());
-    // std::vector<T> temp;
-    int index_ptr;
-    for(int i = 0; i < size; i++) {
-      index_ptr = reordering[i];
-      temp.push_back(reorder[index_ptr]);
-      // temp[i] = (reorder[index_ptr]);
+    for (int i : reordering) {
+      temp.push_back(reorder[i]);
     }
-    // std::cout << reordering << std::endl;
-    // return temp;
   }
 
-  void print() {
-    int size = static_cast<int>(reorder.size());
-    for (int i = 0; i < num_orderings; i++) {
-      for (int j = 0; j < size; j++) {
-        std::cout << permutations[i][j] << " ";
+  void print() const {
+    for (const auto& perm : permutations) {
+      for (int j : perm) {
+        std::cout << j << " ";
       }
       std::cout << std::endl;
     }
   }
 };
+
 
 // HyperMapper Input Parameter object
 template <class T> class HMInputParam : public HMInputParamBase {
@@ -219,8 +169,8 @@ private:
   T Value;
 
 public:
-  HMInputParam(std::string _Name = "", ParamType _Type = ParamType::Integer)
-      : HMInputParamBase(_Name, _Type) {
+  HMInputParam(std::string _Name = "", ParamType _Type = ParamType::Integer, std::vector<T> _Range = {})
+      : HMInputParamBase(_Name, _Type), Range(_Range) {
         if (std::is_same<T, int>::value)
           setDType(Int);
         else if (std::is_same<T, float>::value)
@@ -240,19 +190,22 @@ public:
   void setVal(T _Value) { Value = _Value; }
 
   bool operator==(const std::string &_Key) {
-    if (getKey() == _Key) {
-      return true;
-    } else {
-      return false;
-    }
+    return getKey() == _Key;
   }
 
   bool operator==(const HMInputParam<T> &IP) {
-    if (getKey() == IP.getKey()) {
-      return true;
-    } else {
-      return false;
+    return getKey() == IP.getKey();
+  }
+
+  template <class U>
+  void printRange(std::ostream& out, const std::vector<U>& range, const std::string& prefix = "", const std::string& postfix = "") const {
+    out << prefix;
+    char separator[1] = "";
+    for (const auto& i : range) {
+      out << separator << i;
+      separator[0] = ',';
     }
+    out << postfix;
   }
 
   void print(std::ostream &out) {

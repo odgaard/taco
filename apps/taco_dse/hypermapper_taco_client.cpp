@@ -29,6 +29,14 @@
 #include "json.hpp"
 #include "argparse/argparse.hpp"
 
+#include <iostream>
+#include <memory>
+#include <string>
+#include <grpcpp/grpcpp.h>
+#include <typeinfo>
+#include "config_service.grpc.pb.h" // The generated header from the .proto file
+
+
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
 SpMM *spmm_handler;
@@ -38,10 +46,16 @@ TTM *ttm_handler;
 MTTKRP *mttkrp_handler;
 bool initialized = false;
 
+using grpc::Server;
+using grpc::ServerBuilder;
+using grpc::ServerContext;
+using grpc::Status;
+using grpc::StatusCode;
+
 using namespace std::chrono;
 using json = nlohmann::json;
+
 namespace fs = std::experimental::filesystem;
-// const taco::IndexVar i("i"), j("j"), k("k"), l("l"), m("m"), n("n");
 int WARP_SIZE = 32;
 float default_config_time = 0.0f;
 float no_sched_time = 0.0f;
@@ -69,7 +83,7 @@ int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams);
 int collectInputParamsTTM(std::vector<HMInputParamBase *> &InParams);
 int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name);
 void deleteInputParams(std::vector<HMInputParamBase *> &InParams);
-auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key);
+std::vector<HMInputParamBase *>::iterator findHMParamByKey(std::vector<HMInputParamBase *> &InParams, const std::string& Key);
 void setInputValue(HMInputParamBase *Param, std::string ParamVal);
 taco::IndexStmt scheduleTTMCPU(taco::IndexStmt stmt, taco::Tensor<double> B, int CHUNK_SIZE, int UNROLL_FACTOR, int order);
 HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
@@ -80,6 +94,170 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
 HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger);
 void spMMExhaustiveSearch();
+std::string paramValueToString(HMInputParamBase *Param);
+
+
+
+template <typename T>
+void setParameterValue(HMInputParamBase *param, const T &value) {
+            using ValueType = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<ValueType, int32_t>) {
+                static_cast<HMInputParam<int>*>(param)->setVal(value);
+            } else if constexpr (std::is_same_v<ValueType, float>) {
+                static_cast<HMInputParam<float>*>(param)->setVal(value);
+            } else if constexpr (std::is_same_v<ValueType, std::string>) {
+                static_cast<HMInputParam<std::string>*>(param)->setVal(value);
+            } else if constexpr (std::is_same_v<ValueType, google::protobuf::RepeatedField<int>>) {
+                std::vector<int> vecValue(value.begin(), value.end());
+                HMInputParam<std::vector<int>>* typed_param = static_cast<HMInputParam<std::vector<int>>*>(param);
+                typed_param->setVal(vecValue);
+                std::cout << paramValueToString(typed_param) << std::endl;
+            } else {
+                std::cout << "Unknown set parameter type: " << typeid(ValueType).name() << std::endl;
+            }
+            // ... Add more types as needed
+    }
+
+std::ostream& operator<<(std::ostream& os, const google::protobuf::RepeatedField<int>& values) {
+    for (int i = 0; i < values.size(); ++i) {
+        os << values[i];
+        if (i != values.size() - 1) {
+            os << ", ";
+        }
+    }
+    return os;
+}
+
+template <typename T>
+void printParameter(const std::string& paramName, const T &value, const std::string& type) {
+    std::cout << paramName << ": ";
+    if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::vector<int>>) {
+        for (size_t i = 0; i < value.size(); ++i) {
+            std::cout << value[i];
+            if (i != value.size() - 1) {
+                std::cout << ", ";
+            }
+        }
+    } else {
+        std::cout << value;
+    }
+    std::cout << " (" << type << ")" << std::endl;
+}
+
+std::string paramValueToString(HMInputParamBase *Param) {
+    switch (Param->getDType()) {
+        case Int:
+            return std::to_string(static_cast<HMInputParam<int>*>(Param)->getVal());
+        case Float:
+            return std::to_string(static_cast<HMInputParam<float>*>(Param)->getVal());
+        case IntVector: {
+            std::vector<int> values = static_cast<HMInputParam<std::vector<int>>*>(Param)->getVal();
+            std::stringstream ss;
+            ss << "(";
+            for (size_t i = 0; i < values.size(); ++i) {
+                ss << values[i];
+                if (i != values.size() - 1) {
+                    ss << ",";
+                }
+            }
+            ss << ")";
+            return ss.str();
+        }
+        default:
+            return "Unknown Type";
+    }
+}
+
+void printHMInputParamBaseVector(const std::vector<HMInputParamBase*>& vec) {
+    for (const auto& param : vec) {
+        std::cout << paramValueToString(param) << " ";
+        std::cout << param->getDType() << " ";
+    }
+    std::cout << std::endl;
+}
+
+class ConfigurationServiceImpl final : public ConfigurationService::Service {
+private:
+    std::vector<HMInputParamBase *>& m_InParams;
+    std::string m_test_name;
+    std::string m_matrix_name;
+    std::ofstream& m_logger; // Assuming logger is an ofstream. Adjust the type if needed.
+    
+public:
+    ConfigurationServiceImpl(std::vector<HMInputParamBase *>& InParams, std::string test_name, std::string matrix_name, std::ofstream &logger) 
+        : m_InParams(InParams), m_test_name(test_name), m_matrix_name(matrix_name), m_logger(logger) {}
+
+    Status RunConfigurationsClientServer(ServerContext* context, 
+                                         const ConfigurationRequest* request, 
+                                         ConfigurationResponse* response) override {
+        // Access and process the configurations:
+        const Configuration& config = request->configurations();
+        std::cout << "Config received" << std::endl;
+        // Inside your loop:
+        for (const auto& param : config.parameters()) {
+            const std::string& param_name = param.first;
+            const Parameter& parameter = param.second;
+            auto it = findHMParamByKey(m_InParams, param_name);
+            if (it == m_InParams.end()) {
+              return Status::CANCELLED;
+            }
+            HMInputParamBase* hmParam = *it;
+
+            if (parameter.has_integer_param()) {
+                setParameterValue(hmParam, parameter.integer_param().value());
+                //printParameter(param_name, parameter.integer_param().value(), "Integer");
+            } else if (parameter.has_real_param()) {
+                setParameterValue(hmParam, parameter.real_param().value());
+                //printParameter(param_name, parameter.real_param().value(), "Real");
+            } else if (parameter.has_categorical_param()) {
+                setParameterValue(hmParam, parameter.categorical_param().value());
+                //printParameter(param_name, parameter.categorical_param().value(), "Categorical");
+            } else if (parameter.has_ordinal_param()) {
+                setParameterValue(hmParam, parameter.ordinal_param().value());
+                //printParameter(param_name, parameter.ordinal_param().value(), "Ordinal");
+            } else if (parameter.has_string_param()) {
+                setParameterValue(hmParam, parameter.string_param().value());
+                //printParameter(param_name, parameter.string_param().value(), "String");
+            } else if (parameter.has_permutation_param()) {
+                setParameterValue(hmParam, parameter.permutation_param().values());
+                //printParameter(param_name, parameter.permutation_param().values(), "Permutation");
+            } else {
+              return Status::CANCELLED;
+            }
+        }
+
+        std::cout << "Received output_data_file: " << request->output_data_file() << std::endl;
+        //printHMInputParamBaseVector(m_InParams);
+        HMObjective obj;
+        try {
+            obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
+        } catch (const std::exception& e) {
+            m_logger << "Exception caught: " << e.what() << std::endl;
+            return Status(StatusCode::INTERNAL, e.what());
+        } catch (...) {
+            m_logger << "Unknown exception caught" << std::endl;
+            return Status(StatusCode::INTERNAL, "Unknown error");
+        }
+        
+        // Create a mocked response:
+        std::cout << obj.compute_time << std::endl;
+        Metric metric;
+        metric.add_values(obj.compute_time); // Mocked value
+        response->add_metrics()->CopyFrom(metric);
+
+        Timestamp timestamp;
+        timestamp.set_timestamp(12345678); // Mocked timestamp
+        response->mutable_timestamps()->CopyFrom(timestamp);
+
+        Feasible feasible;
+        feasible.set_value(true); // Mocked feasibility value
+        response->mutable_feasible()->CopyFrom(feasible);
+
+        return Status::OK;
+    }
+};
+
+
 
 // popen2 implementation adapted from:
 // https://github.com/vi/syscall_limiter/blob/master/writelimiter/popen2.c
@@ -200,299 +378,57 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   return JSonFileNameStr;
 }
 
-// Function that populates input parameters
-int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT=0) {
-  int numParams = 0;
-
-  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> chunkSize2Values{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> chunkSize3Values{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *chunkSizeParam2 = new HMInputParam<int>("chunk_size2", ParamType::Ordinal);
-  chunkSizeParam2->setRange(chunkSize2Values);
-  InParams.push_back(chunkSizeParam2);
-  numParams++;
-
-  HMInputParam<int> *chunkSizeParam3 = new HMInputParam<int>("chunk_size3", ParamType::Ordinal);
-  chunkSizeParam3->setRange(chunkSize3Values);
-  InParams.push_back(chunkSizeParam3);
-  numParams++;
-
-  // FIXME: For some reason categorical fails for this param
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
+void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
+  InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1}));
+  InParams.push_back(new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal, {0, 1, 2, 4, 8, 16, 32, 64, 128}));
+  InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64}));
 
   int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
+  InParams.push_back(new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation, {std::vector<int>{reorder_size}}));
   num_loops = reorder_size;
-
-  return numParams;
 }
 
-// Function that populates input parameters
+int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT = 0) {
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("chunk_size2", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("chunk_size3", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  addCommonParams(InParams);
+  return InParams.size();
+}
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
-
-  int numParams = 0;
-  std::vector<int> chunkSizeValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> unrollFactorValues{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
-  unrollFactorParam->setRange(unrollFactorValues);
-  InParams.push_back(unrollFactorParam);
-  numParams++;
-
-  // FIXME: For some reason categorical fails for this param
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
-
-  int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
-  num_loops = reorder_size;
-
-  return numParams;
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  addCommonParams(InParams);
+  return InParams.size();
 }
 
-// Function that populates input parameters
 int collectInputParamsSDDMM(std::vector<HMInputParamBase *> &InParams) {
-  int numParams = 0;
-
-  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
-  unrollFactorParam->setRange(unrollFactorValues);
-  InParams.push_back(unrollFactorParam);
-  numParams++;
-
-  // FIXME: For some reason categorical fails for this param
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
-
-  int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
-  num_loops = reorder_size;
-
-  return numParams;
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256}));
+  addCommonParams(InParams);
+  return InParams.size();
 }
 
-// Function that populates input parameters
 int collectInputParamsTTV(std::vector<HMInputParamBase *> &InParams) {
-  int numParams = 0;
-
-  std::vector<int> chunkSizeIValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> chunkSizeFposValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> chunkSizeKValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeIParam = new HMInputParam<int>("chunk_size_i", ParamType::Ordinal);
-  chunkSizeIParam->setRange(chunkSizeIValues);
-  InParams.push_back(chunkSizeIParam);
-  numParams++;
-
-  HMInputParam<int> *chunkSizeFposParam = new HMInputParam<int>("chunk_size_fpos", ParamType::Ordinal);
-  chunkSizeFposParam->setRange(chunkSizeFposValues);
-  InParams.push_back(chunkSizeFposParam);
-  numParams++;
-
-  HMInputParam<int> *chunkSizeKParam = new HMInputParam<int>("chunk_size_k", ParamType::Ordinal);
-  chunkSizeKParam->setRange(chunkSizeKValues);
-  InParams.push_back(chunkSizeKParam);
-  numParams++;
-
-
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
-
-  int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
-  num_loops = reorder_size;
-
-  return numParams;
+  InParams.push_back(new HMInputParam<int>("chunk_size_i", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("chunk_size_fpos", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("chunk_size_k", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  addCommonParams(InParams);
+  return InParams.size();
 }
 
-// Function that populates input parameters
 int collectInputParamsTTM(std::vector<HMInputParamBase *> &InParams) {
-  int numParams = 0;
-
-  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
-  unrollFactorParam->setRange(unrollFactorValues);
-  InParams.push_back(unrollFactorParam);
-  numParams++;
-
-  // FIXME: For some reason categorical fails for this param
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
-
-  int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
-  num_loops = reorder_size;
-
-  return numParams;
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256}));
+  addCommonParams(InParams);
+  return InParams.size();
 }
-
 
 int collectInputParamsMTTKRP(std::vector<HMInputParamBase *> &InParams) {
-  int numParams = 0;
-
-  std::vector<int> chunkSizeValues{2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-  std::vector<int> unrollFactorValues{2, 4, 8, 16, 32, 64, 128, 256};
-  std::vector<int> ompChunkSizeValues{0, 1, 2, 4, 8, 16, 32, 64, 128};
-  std::vector<int> ompNumThreadsValues{1, 2, 4, 8, 16, 32, 64};
-  std::vector<int> ompSchedulingType{0, 1};
-
-  HMInputParam<int> *chunkSizeParam = new HMInputParam<int>("chunk_size", ParamType::Ordinal);
-  chunkSizeParam->setRange(chunkSizeValues);
-  InParams.push_back(chunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *unrollFactorParam = new HMInputParam<int>("unroll_factor", ParamType::Ordinal);
-  unrollFactorParam->setRange(unrollFactorValues);
-  InParams.push_back(unrollFactorParam);
-  numParams++;
-
-  // FIXME: For some reason categorical fails for this param
-  HMInputParam<int> *ompSchedulingTypeParam = new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal);
-  ompSchedulingTypeParam->setRange(ompSchedulingType);
-  InParams.push_back(ompSchedulingTypeParam);
-  numParams++;
-
-  HMInputParam<int> *ompChunkSizeParam = new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal);
-  ompChunkSizeParam->setRange(ompChunkSizeValues);
-  InParams.push_back(ompChunkSizeParam);
-  numParams++;
-
-  HMInputParam<int> *ompNumThreadsParam = new HMInputParam<int>("omp_num_threads", ParamType::Ordinal);
-  ompNumThreadsParam->setRange(ompNumThreadsValues);
-  InParams.push_back(ompNumThreadsParam);
-  numParams++;
-
-  int reorder_size = 5;
-  std::vector<std::vector<int>> valuesRange {std::vector<int>{reorder_size}};
-  HMInputParam<std::vector<int>> *loopOrderingParam = new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation);
-  loopOrderingParam->setRange(valuesRange);
-  InParams.push_back(loopOrderingParam);
-  numParams++;
-  num_loops = reorder_size;
-
-  return numParams;
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {2, 4, 8, 16, 32, 64, 128, 256}));
+  addCommonParams(InParams);
+  return InParams.size();
 }
 
 int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name) {
@@ -535,15 +471,14 @@ void deleteInputParams(std::vector<HMInputParamBase *> &InParams) {
   }
 }
 
-// Function for mapping input parameter based on key
-auto findHMParamByKey(std::vector<HMInputParamBase *> &InParams, std::string Key) {
-  for (auto it = InParams.begin(); it != InParams.end(); ++it) {
-    HMInputParamBase Param = **it;
-    if (Param == Key) {
-      return it;
+std::vector<HMInputParamBase *>::iterator findHMParamByKey(std::vector<HMInputParamBase *> &InParams, const std::string& Key) {
+    for (auto it = InParams.begin(); it != InParams.end(); ++it) {
+        HMInputParamBase* Param = *it;
+        if (*Param == Key) {
+            return it;
+        }
     }
-  }
-  return InParams.end();
+    return InParams.end();
 }
 
 //Function that sets the input parameter value
@@ -571,47 +506,11 @@ void setInputValue(HMInputParamBase *Param, std::string ParamVal) {
   }
 }
 
+
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMVDense_(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
-  // int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
-  // // int order = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-
-  // std::vector<int> default_ordering;
-  // std::vector<int> loop_ordering;
-  // for(int i = 0; i < num_loops; i++) {
-  //   // std::cout << "in here\n";
-  //   int order = static_cast<HMInputParam<int>*>(InputParams[i + 1])->getVal();
-  //   loop_ordering.push_back(order);
-  //   default_ordering.push_back(i);
-  // }
-
-  // // int NUM_I = 10000;
-  // // int NUM_J = 10000;
-  // if(!initialized) {
-  //   // spmv_handler = new SpMV(NUM_I, NUM_J);
-  //   spmv_handler = new SpMV();
-  //   spmv_handler->matrix_name = matrix_name;
-  //   spmv_handler->initialize_data(1);
-  //   initialized = true;
-  //   sparsity = spmv_handler->get_sparsity();
-  //   num_i = spmv_handler->get_num_i();
-  //   op = "SpMV";
-
-  //   compute_times = vector<double>();
-  // }
-
-  // spmv_handler->generate_schedule(chunk_size, 0, 0, loop_ordering);
-
-  // bool default_config = (chunk_size == 16 && loop_ordering == default_ordering);
-  // spmv_handler->compute(default_config);
-
-  // Obj.compute_time = spmv_handler->get_compute_time();
-
-  // if(chunk_size == 16 && loop_ordering == default_ordering) {
-  //   default_config_time = spmv_handler->get_default_compute_time();
-  // }
   return Obj;
 }
 
@@ -624,8 +523,6 @@ HMObjective calculateObjectiveSpMVSparse(std::vector<HMInputParamBase *> &InputP
   int chunk_size2 = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
   int order = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
 
-  // if(no_sched_time == 0.0f)
-  //   SpMVNoSched(logger);
   int NUM_I = 50000;
   int NUM_J = 50000;
 
@@ -758,10 +655,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
 
   std::vector<int> default_ordering{0,1,2,3,4};
-  // int NUM_I = 67173;
-  // int NUM_J = 67173;
   int NUM_K = 256;
-  // float _sparsity = .982356;
   std::vector<double> compute_times;
 
   bool no_sched_init = false;
@@ -790,72 +684,13 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     no_sched_init = true;
   }
 
-  // std::vector<bool> valid_perm(120, true);
-  // std::vector<std::vector<int>> orders;
-  // loop_ordering = vector<int>{0, 1, 2, 3,4};
-  // bool valid_order = false;
-  // int counter = 0;
-  // int num_right = 0;
   taco::Tensor<double> temp_result({spmv_handler->NUM_I}, taco::dense);
-  // do {
-  // taco::Tensor<double> temp_result_({spmv_handler->NUM_I}, taco::dense);
-  //   std::vector<int> loop_order;
-  //   for(int l : loop_ordering) {
-  //     std::cout << l << " ";
-  //     loop_order.push_back(l);
-  //   }
-  //   std::cout << "looporder\n";
-  //   orders.push_back(loop_ordering);
-  //   std::cout << std::endl;
-  //   num_reps = 1;
-  //   for(int i = 0; i < num_reps; i++) {
-  //     try {
-  //       spmv_handler->schedule_and_compute(temp_result_, chunk_size, chunk_size2, chunk_size3, loop_order, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
-  //       valid_order = true;
-  //       num_right++;
-  //       // valid_perm.push_back(valid_order);
-  //     } catch (const taco::TacoException& err) {
-  //       std::cout << "Failed\n";
-  //       compute_times.push_back(10000.0f);
-  //       valid_order = false;
-  //       // valid_perm.push_back(valid_order);
-  //       valid_perm[counter] = false;
-  //       // break;
-  //     }
-  //     std::cout << std::boolalpha << valid_order << std::endl;
-  //     compute_times.push_back(spmv_handler->get_compute_time());
-  //     std::cout << spmv_handler->get_compute_time() << std::endl;
-  //   }
-  //   // valid_perm.push_back(valid_order);
-  //   counter++;
-  // } while (std::next_permutation(loop_ordering.begin(), loop_ordering.end()));
-
-
-  // int count = 0;
-  // for(auto l : orders) {
-  //   for(auto index : l) {
-  //     std::cout << index << " ";
-  //   }
-  //   std::cout << "| " << valid_perm[count];
-  //   std::cout << std::endl;
-  //   count++;
-  // }
-
-  // std::cout << "Number correct: " << num_right << std::endl;
-
-  // exit(1);
-
-
   compute_times = std::vector<double>();
-  // spmv_handler->set_cold_run();
-
-
+  
   if(default_config_time == 0.0f) {
-    // std::cout << "Default time: " << Obj.compute_time << std::endl;
     int temp_chunk_size = 16;
     int temp_chunk_size2 = 16;
     int temp_chunk_size3 = 16;
-    // int temp_unroll_factor = 8;
     std::vector<int> temp_loop_ordering{0,1,2,3,4};
     int temp_omp_scheduling_type = 0;
     int temp_omp_chunk_size = 1;
@@ -891,12 +726,6 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
 HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
   using namespace taco;
   HMObjective Obj;
-  // int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
-  // int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  // int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  // int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  // std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[4])->getVal();
-  // int num_threads = 32;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
@@ -911,16 +740,12 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   std::cout << std::endl;
 
   //Initialize tensors
-  // int NUM_I = 10000;
-  // int NUM_J = 1000;
-  // int NUM_K = 10000;
   std::vector<double> compute_times;
 
   bool no_sched_init = false;
 
   if(!initialized) {
     cout << "INITIALIZING" << endl;
-    // sddmm_handler = new SDDMM(NUM_I, NUM_J, NUM_K);
     sddmm_handler = new SDDMM();
     sddmm_handler->matrix_name = matrix_name;
     sddmm_handler->initialize_data(1);
@@ -938,7 +763,6 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     std::vector<int> tmp_loop_ordering = default_ordering;
     int tmp_chunk_size = 16;
     int tmp_unroll_factor = 8;
-    // sddmm_handler->generate_schedule(tmp_chunk_size, tmp_unroll_factor, tmp_loop_ordering);
     compute_times = vector<double>();
     for(int i = 0; i < 5; i++) {
       double timer = 0.0;
@@ -953,7 +777,6 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
 
   if(default_config_time == 0.0f) {
-    // default_config_time = median(compute_times);
     int temp_chunk_size = 16;
     int temp_unroll_factor = 8;
     std::vector<int> temp_loop_ordering{0,1,2,3,4};
@@ -1012,7 +835,6 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     ttv_handler->NUM_K = NUM_K;
     ttv_handler->initialize_data(0);
     initialized = true;
-    // sparsity = ttv_handler->get_sparsity();
     num_i = ttv_handler->NUM_I;
     num_j = ttv_handler->NUM_J;
 
@@ -1021,12 +843,10 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     cout << "computing unscheduled" << endl;
     compute_times = vector<double>();
     for(int i = 0; i < 5; i++) {
-      // std::cout << "Computing unscheduled" << std::endl;
       double timer = 0.0;
       timer = ttv_handler->compute_unscheduled();
       compute_times.push_back(timer);
     }
-    // Obj.compute_time = median(compute_times);
     no_sched_time = median(compute_times);
     no_sched_init = true;
     cout << "computed unscheduled" << endl;
@@ -1045,7 +865,6 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
     std::cout << "Computing default unscheduled" << std::endl;
     int temp_chunk_size = 16;
-    // int temp_unroll_factor = 8;
     std::vector<int> temp_loop_ordering{0,1,2,3,4};
     int temp_omp_scheduling_type = 0;
     int temp_omp_chunk_size = 16;
@@ -1053,7 +872,6 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     int temp_chunk_size_fpos = 16;
     int temp_chunk_size_k = 16;
     int temp_omp_num_threads = 32;
-    // default_config_time = ttv_handler->get_default_compute_time();
     ttv_handler->schedule_and_compute(temp_result, temp_chunk_size_i, temp_chunk_size_fpos, temp_chunk_size_k,
                                       temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 5);
     ttv_handler->set_cold_run();
@@ -1110,11 +928,9 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
     ttm_handler->NUM_L = 64;
     ttm_handler->initialize_data(1);
     initialized = true;
-    // sparsity = ttv_handler->get_sparsity();
     num_i = ttm_handler->NUM_I;
     num_j = ttm_handler->NUM_J;
-    //int num_l = ttm_handler->NUM_L;
-
+ 
     // Added for filtering vectors out from suitesparse
     op = "TTM";
 
@@ -1199,11 +1015,9 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
     mttkrp_handler->NUM_J = 2560;
     mttkrp_handler->initialize_data(1);
     initialized = true;
-    // sparsity = ttv_handler->get_sparsity();
     num_i = mttkrp_handler->NUM_I;
     num_j = mttkrp_handler->NUM_J;
-    //int num_l = mttkrp_handler->NUM_L;
-
+  
     // Added for filtering vectors out from suitesparse
     op = "MTTKRP";
 
@@ -1228,9 +1042,6 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   compute_times = vector<double>();
   taco::Tensor<double> temp_result({mttkrp_handler->NUM_I, mttkrp_handler->NUM_J}, taco::dense);
 
-
-  // mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
-
   if(default_config_time == 0.0f) {
     std::cout << "Computing default unscheduled" << std::endl;
     int temp_chunk_size = 16;
@@ -1239,7 +1050,6 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
     int temp_omp_scheduling_type = 0;
     int temp_omp_chunk_size = 1;
     int temp_omp_num_threads = 32;
-    // default_config_time = ttv_handler->get_default_compute_time();
     mttkrp_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_unroll_factor, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false);
     mttkrp_handler->set_cold_run();
 
@@ -1288,13 +1098,6 @@ bool validate_ordering_sddmm(std::vector<int> order) {
   std::unordered_map<int, int> dict;
   for(int i = 0; i < order.size(); i++) {
     dict[order[i]] = i;
-    // if(order[i] == 2) {
-    //   if(dict.find(4) == dict.end()) {
-    //     if(dict.find(0) != dict.end()){ //&& dict.find(1) != dict.end()) {
-    //       return false;
-    //     }
-    //   }
-    // }
     if(i == 1) {
       if(dict.find(1) != dict.end() && dict.find(2) != dict.end()) {
         return false;
@@ -1323,18 +1126,6 @@ bool validate_ordering_sddmm(std::vector<int> order) {
         return false;
       }
     }
-    // if(order[i] == 4 && i < 2) {
-    //   return false;
-    // }
-    // if(order[i] == 4) {
-    //   if(i == 1 && dict.find(0) != dict.end()) {
-    //     return false;
-    //   }
-    //   if(i == 2 && dict.find(0) != dict.end() && dict.find(3) != dict.end()) {
-    //     return false;
-    //   }
-    // }
-
   }
   return true;
 }
@@ -1400,12 +1191,9 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
   spmm_handler->set_cold_run();
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
   for(int i = 0; i < 5; i++) {
-    // spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, default_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
     double timer = spmm_handler->compute_unscheduled();
-    // compute_times.push_back(spmm_handler->get_compute_time());
     compute_times.push_back(timer);
-    // std::cout << spmm_handler->get_compute_time() << std::endl;
-  }
+   }
 
   double compute_time = median(compute_times);
 
@@ -1551,24 +1339,12 @@ int main(int argc, char **argv) {
   std::string OutputSubDir = OutputDir + OutputSubFolderName + "/";
   if (fs::exists(OutputDir)) {
     std::cerr << "Output directory exists, continuing!" << std::endl;
-    // Exit gracefully if folder already exists with csv files
-    // TODO: Remove if not using slurm
-    // exit(1);
     std::string csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
     std::string png_file = OutputFoldername + "/" + test_name + "_plot.png";
     if(fs::exists(csv_file)) {
       std::cerr << "CSV file exists, exiting" << std::endl;
       exit(0);
     }
-    // std::string last_csv_file = OutputFoldername + "/" + AppName + "_" +  optimization + "9" + "_output_data.csv";
-    // if(fs::exists(csv_file) && !fs::exists(last_csv_file) && fs::exists(png_file)) {
-    //   std::cerr << "CSV file and png file exists, exiting";
-    //   exit(0);
-    // }
-    // if(fs::exists(csv_file) && fs::exists(last_csv_file) && fs::exists(png_file)) {
-    //   std::cerr << "All CSV files and png file exists, exiting";
-    //   exit(1);
-    // }
   } else {
 
     std::cerr << "Output directory does not exist, creating!" << std::endl;
@@ -1614,149 +1390,157 @@ int main(int argc, char **argv) {
       createjson(AppName, OutputFoldername + "/" + OutputSubFolderName, NumIterations,
                  NumSamples, InParams, Objectives, Predictor, optimization, count);
 
-  // Launch HyperMapper
-  std::string cmd("python ");
-  cmd += getenv("HYPERMAPPER_HOME");
-  cmd += "/scripts/hypermapper.py";
-  // cmd += "/hypermapper/optimizer.py";
-  cmd += " " + JSonFileNameStr;
-
-  std::cout << "Executing command: " << cmd << std::endl;
-  struct popen2 hypermapper;
-  popen2(cmd.c_str(), &hypermapper);
-
-  FILE *instream = fdopen(hypermapper.from_child, "r");
-  FILE *outstream = fdopen(hypermapper.to_child, "w");
-  cout << "opened hypermapper" << endl;
-
+  bool grpc = true;
   taco::util::Timer timer;
 
-  timer.start();
+  if (grpc) {
+    timer.start();
+  
+    std::string server_address("0.0.0.0:50051");
+    ConfigurationServiceImpl service(InParams, test_name, matrix_name, logger);
 
-  // Loop that communicates with HyperMapper
-  // Everything is done through function calls,
-  // there should be no need to modify bellow this line.
-  char* fgets_res;
-  int i = 0;
-  while (true) {
-    fgets_res = fgets(buffer, max_buffer, instream);
-    if (fgets_res == NULL) {
-      fatalError("'fgets' reported an error.");
-    }
-    std::cout << "Iteration: " << i << std::endl;
-    std::cout << "Recieved: " << buffer;
-    // Receiving Num Requests
-    std::string bufferStr(buffer);
-    if (!bufferStr.compare("End of HyperMapper\n")) {
-      std::cout << "Hypermapper completed!\n";
-      break;
-    }
-    std::string NumReqStr = bufferStr.substr(bufferStr.find(' ') + 1);
-    std::cout << "numreq: " << NumReqStr << std::endl;
-    int numRequests = std::stoi(NumReqStr);
-    // Receiving input param names
-    fgets_res = fgets(buffer, max_buffer, instream);
-    if (fgets_res == NULL) {
-      fatalError("'fgets' reported an error.");
-    }
-    bufferStr = std::string(buffer);
-    std::cout << "Recieved: " << buffer;
-    size_t pos = 0;
-    // Create mapping for InputParam objects to keep track of order
-    map<int, HMInputParamBase *> InputParamsMap;
-    std::string response;
-    for (int param = 0; param < numParams; param++) {
-      size_t len = bufferStr.find_first_of(",\n", pos) - pos;
-      std::string ParamStr = bufferStr.substr(pos, len);
-      //      std::cout << "  -- param: " << ParamStr << "\n";
-      auto paramIt = findHMParamByKey(InParams, ParamStr);
-      if (paramIt != InParams.end()) {
-        InputParamsMap[param] = *paramIt;
-        response += ParamStr;
-        response += ",";
-      } else {
-        std::cout << "Param: " << ParamStr << std::endl;
-        fatalError("Unknown parameter received!");
-      }
-      pos = bufferStr.find_first_of(",\n", pos) + 1;
-    }
-    for (auto objString : Objectives)
-      response += objString + ",";
-    if (Predictor) {
-      std::cout << response << std::endl;
-      response += "Valid";
-    }
-    response += "\n";
-    // For each request
-    for (int request = 0; request < numRequests; request++) {
-      // Receiving paramter values
+    ServerBuilder builder;
+    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+    builder.RegisterService(&service);
+    std::unique_ptr<Server> server(builder.BuildAndStart());
+    std::cout << "Server listening on " << server_address << std::endl;
+
+    server->Wait();
+  } else {
+    // Launch HyperMapper
+    std::string cmd("python ");
+    cmd += getenv("HYPERMAPPER_HOME");
+    cmd += "/scripts/hypermapper.py";
+    // cmd += "/hypermapper/optimizer.py";
+    cmd += " " + JSonFileNameStr;
+
+    std::cout << "Executing command: " << cmd << std::endl;
+    struct popen2 hypermapper;
+    popen2(cmd.c_str(), &hypermapper);
+
+    FILE *instream = fdopen(hypermapper.from_child, "r");
+    FILE *outstream = fdopen(hypermapper.to_child, "w");
+    cout << "opened hypermapper" << endl;
+  
+    // Loop that communicates with HyperMapper
+    // Everything is done through function calls,
+    // there should be no need to modify bellow this line.
+    char* fgets_res;
+    int i = 0;
+    while (true) {
       fgets_res = fgets(buffer, max_buffer, instream);
       if (fgets_res == NULL) {
         fatalError("'fgets' reported an error.");
       }
-      std::cout << "Received: " << buffer;
+      std::cout << "Iteration: " << i << std::endl;
+      std::cout << "Recieved: " << buffer;
+      // Receiving Num Requests
+      std::string bufferStr(buffer);
+      if (!bufferStr.compare("End of HyperMapper\n")) {
+        std::cout << "Hypermapper completed!\n";
+        break;
+      }
+      std::string NumReqStr = bufferStr.substr(bufferStr.find(' ') + 1);
+      std::cout << "numreq: " << NumReqStr << std::endl;
+      int numRequests = std::stoi(NumReqStr);
+      // Receiving input param names
+      fgets_res = fgets(buffer, max_buffer, instream);
+      if (fgets_res == NULL) {
+        fatalError("'fgets' reported an error.");
+      }
       bufferStr = std::string(buffer);
-      pos = 0;
+      std::cout << "Recieved: " << buffer;
+      size_t pos = 0;
+      // Create mapping for InputParam objects to keep track of order
+      map<int, HMInputParamBase *> InputParamsMap;
+      std::string response;
       for (int param = 0; param < numParams; param++) {
         size_t len = bufferStr.find_first_of(",\n", pos) - pos;
-        if (bufferStr.at(pos) == '(') {
-          len = bufferStr.find_first_of(")\n", pos) - pos + 1;
+        std::string ParamStr = bufferStr.substr(pos, len);
+        //      std::cout << "  -- param: " << ParamStr << "\n";
+        auto paramIt = findHMParamByKey(InParams, ParamStr);
+        if (paramIt != InParams.end()) {
+          InputParamsMap[param] = *paramIt;
+          response += ParamStr;
+          response += ",";
+        } else {
+          std::cout << "Param: " << ParamStr << std::endl;
+          fatalError("Unknown parameter received!");
         }
-        std::string ParamValStr = bufferStr.substr(pos, len);
-        setInputValue(InputParamsMap[param], ParamValStr);
-        response += ParamValStr;
-        response += ",";
-        pos = bufferStr.find_first_of(",\n", pos + len) + 1;
+        pos = bufferStr.find_first_of(",\n", pos) + 1;
       }
-      HMObjective Obj = calculateObjective(InParams, test_name, matrix_name, logger);  // Function to run hypermapper on
-      response += std::to_string(Obj.compute_time);
-      if(Predictor){
-        response += ",";
-        response += to_string(Obj.valid);
+      for (auto objString : Objectives)
+        response += objString + ",";
+      if (Predictor) {
+        std::cout << response << std::endl;
+        response += "Valid";
       }
       response += "\n";
+      // For each request
+      for (int request = 0; request < numRequests; request++) {
+        // Receiving paramter values
+        fgets_res = fgets(buffer, max_buffer, instream);
+        if (fgets_res == NULL) {
+          fatalError("'fgets' reported an error.");
+        }
+        std::cout << "Received: " << buffer;
+        bufferStr = std::string(buffer);
+        pos = 0;
+        for (int param = 0; param < numParams; param++) {
+          size_t len = bufferStr.find_first_of(",\n", pos) - pos;
+          if (bufferStr.at(pos) == '(') {
+            len = bufferStr.find_first_of(")\n", pos) - pos + 1;
+          }
+          std::string ParamValStr = bufferStr.substr(pos, len);
+          setInputValue(InputParamsMap[param], ParamValStr);
+          response += ParamValStr;
+          response += ",";
+          pos = bufferStr.find_first_of(",\n", pos + len) + 1;
+        }
+        printHMInputParamBaseVector(InParams);
+        HMObjective Obj = calculateObjective(InParams, test_name, matrix_name, logger);  // Function to run hypermapper on
+        response += std::to_string(Obj.compute_time);
+        if(Predictor){
+          response += ",";
+          response += to_string(Obj.valid);
+        }
+        response += "\n";
+      }
+      std::cout << "Response:\n" << response;
+      fputs(response.c_str(), outstream);
+      fflush(outstream);
+      i++;
     }
-    std::cout << "Response:\n" << response;
-    fputs(response.c_str(), outstream);
-    fflush(outstream);
-    i++;
+    timer.stop();
+    cout << "closing pipes" << endl;
+    close(hypermapper.from_child);
+    close(hypermapper.to_child);
+    deleteInputParams(InParams);
+    std::cout << "No sched: " << no_sched_time << std::endl;
+
+    cout << JSonFileNameStr << endl;
+
+    std::ofstream logger_title(title_file, std::ios_base::app);
+    std::ofstream stats_title(stats_file, std::ios_base::app);
+
+    FILE *fp;
+    std::string cmdPareto("python ");
+    cmdPareto += getenv("HYPERMAPPER_HOME");
+    cmdPareto += "/scripts/plot_optimization_results.py -j";
+    cmdPareto += " " + JSonFileNameStr;
+    cmdPareto += " -i " + OutputFoldername + " --plot_log -o " + OutputFoldername + "/" + test_name + "_plot.png";
+    cmdPareto += " --expert_configuration " + to_string(default_config_time);
+    cmdPareto += " -t '" + op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
+    cmdPareto += " -doe ";
+
+    std::string title = op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
+    logger_title << title << std::endl;
+    stats_title << optimization << "," << timer.getResult().mean << std::endl;
+  
+    logger_.close();
+    logger.close();
+    logger_title.close();
+    stats_title.close();
   }
-  timer.stop();
-  cout << "closing pipes" << endl;
-  close(hypermapper.from_child);
-  close(hypermapper.to_child);
-  deleteInputParams(InParams);
-  std::cout << "No sched: " << no_sched_time << std::endl;
-
-  cout << JSonFileNameStr << endl;
-
-  std::ofstream logger_title(title_file, std::ios_base::app);
-  std::ofstream stats_title(stats_file, std::ios_base::app);
-
-  FILE *fp;
-  std::string cmdPareto("python ");
-  cmdPareto += getenv("HYPERMAPPER_HOME");
-  cmdPareto += "/scripts/plot_optimization_results.py -j";
-  cmdPareto += " " + JSonFileNameStr;
-  cmdPareto += " -i " + OutputFoldername + " --plot_log -o " + OutputFoldername + "/" + test_name + "_plot.png";
-  cmdPareto += " --expert_configuration " + to_string(default_config_time);
-  cmdPareto += " -t '" + op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity) + "'";
-  cmdPareto += " -doe ";
-
-  std::string title = op + " " + to_string(num_i) + "x" + to_string(num_j) + " d:" + to_string(dimensionality_plus_one - 1) + " sparsity:" + to_string(sparsity);
-  logger_title << title << std::endl;
-  stats_title << optimization << "," << timer.getResult().mean << std::endl;
-  // cmdPareto += " " + to_string(no_sched_time);
-  // std::cout << "Executing " << cmdPareto << std::endl;
-  // fp = popen(cmdPareto.c_str(), "r");
-  // while (fgets(buffer, max_buffer, fp))
-  //   printf("%s", buffer);
-  // pclose(fp);
-
-  logger_.close();
-  logger.close();
-  logger_title.close();
-  stats_title.close();
-
   return 0;
 }
