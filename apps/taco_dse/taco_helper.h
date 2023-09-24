@@ -170,7 +170,7 @@ struct UfuncInputCache {
   }
 
   template<typename U>
-  taco::Tensor<double> getTensor(std::string path, U format, bool countNNZ = false, float sparsity=0.3, int num_k = 1000, bool includeThird = false) {
+  taco::Tensor<double> getTensor(std::string path, U format, bool shift_dim=false, bool countNNZ = false, float sparsity=0.3, int num_k = 1000, bool includeThird = false) {
     // See if the paths match.
     if (this->lastPath == path) {
       // TODO (rohany): Not worrying about whether the format was the same as what was asked for.
@@ -190,6 +190,17 @@ struct UfuncInputCache {
     this->num_i = this->inputTensor.getDimensions()[0];
     this->num_j = this->inputTensor.getDimensions()[1];
     this->num_k = this->inputTensor.getDimensions()[2];
+
+    int last_dim = 0;
+    if (shift_dim) {
+        last_dim = this->inputTensor.getDimensions()[3];
+    }
+
+    taco::Tensor<double> copy("test", {this->num_i, this->num_k, last_dim}, taco::Sparse);
+
+    // for (auto component : this->inputTensor) {
+
+    // }
 
     if (countNNZ) {
       this->nnz = 0;
@@ -1336,7 +1347,7 @@ public:
     taco::Tensor<double> B;
     taco::Tensor<double> c;
     taco::IndexStmt stmt;
-    taco::IndexVar f, fpos, chunk, fpos2, k1, k2, i0, i1;
+    taco::IndexVar f, fpos, chunk, fpos2, k1, k2, kpos, kpos1, kpos2, i0, i1;
     int run_mode, num_reps;
     TTV(int mode, int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, float SPARSITY = .3) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
@@ -1352,7 +1363,8 @@ public:
     {
     }
     TTV() : run_mode(1), initialized{false}, cold_run{true},
-            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"), i0("i0"), i1("i1") {}
+            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"), i0("i0"), i1("i1"),
+            kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"){}
     float get_sparsity() { return (run_mode == 0) ? SPARSITY : inputCache.get_sparsity(); }
     void set_cold_run() { cold_run = true; }
     void initialize_data(int mode = RANDOM) override
@@ -1365,41 +1377,51 @@ public:
             return;
 
         srand(9536);
-        // for (int i = 0; i < NUM_I; i++)
-        // {
-        //     for (int j = 0; j < NUM_J; j++)
-        //     {
-        //         for (int k = 0; k < NUM_K; k++)
-        //         {
-        //             float rand_float = (float)rand() / (float)(RAND_MAX);
-        //             if (rand_float < SPARSITY)
-        //             {
-        //                 B.insert({i, j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
-        //             }
-        //         }
-        //     }
-        // }
 
-        auto ssPath = std::getenv("FROST_PATH");
-        if(ssPath == nullptr) {
-            std::cout << "Environment variable FROST_PATH not set\n";
-        }
-        std::string ssPathStr = std::string(ssPath);
-
-        char sep = '/';
-        std::string matrix_path;
-        if (ssPathStr[ssPathStr.length()] == sep) {
-            matrix_path = ssPathStr + matrix_name;
-        } else {
-            matrix_path = ssPathStr + "/" + matrix_name;
+        int nnz = 0;
+        if (mode == RANDOM) {
+            taco::Tensor<double> res("res", {NUM_I, NUM_J, NUM_K}, taco::Sparse);
+            B = res;
+            for (int i = 0; i < NUM_I; i++)
+                {
+                    for (int j = 0; j < NUM_J; j++)
+                        {
+                            for (int k = 0; k < NUM_K; k++)
+                                {
+                                    float rand_float = (float)rand() / (float)(RAND_MAX);
+                                    if (rand_float < SPARSITY)
+                                        {
+                                            B.insert({i, j, k}, (double)((int)(rand_float * 3 / SPARSITY)));
+                                            nnz++;
+                                        }
+                                }
+                        }
+                }
         }
 
-        B = inputCache.getTensor(matrix_path, Sparse, true);
-        NUM_I = inputCache.num_i;
-        NUM_J = inputCache.num_j;
-        NUM_K = inputCache.num_k;
+        else {
+            auto ssPath = std::getenv("FROST_PATH");
+            if(ssPath == nullptr) {
+                std::cout << "Environment variable FROST_PATH not set\n";
+            }
+            std::string ssPathStr = std::string(ssPath);
+
+            char sep = '/';
+            std::string matrix_path;
+            if (ssPathStr[ssPathStr.length()] == sep) {
+                matrix_path = ssPathStr + matrix_name;
+            } else {
+                matrix_path = ssPathStr + "/" + matrix_name;
+            }
+
+            B = inputCache.getTensor(matrix_path, Sparse, true);
+            NUM_I = inputCache.num_i;
+            NUM_J = inputCache.num_j;
+            NUM_K = inputCache.num_k;
+        }
 
         std::cout << "Dimensions: " << NUM_I << ", " << NUM_J << ", " << NUM_K << std::endl;
+        std::cout << "NNZ: " << nnz << std::endl;
 
         taco::Tensor<double> c_("c", {NUM_K}, taco::Format{taco::ModeFormat::Dense});
         c = c_;
@@ -1412,7 +1434,7 @@ public:
         B.pack();
         c.pack();
 
-        std::vector<taco::IndexVar> reorder_{i0, chunk, fpos2, k1, k2};
+        std::vector<taco::IndexVar> reorder_{i0, chunk, fpos2, kpos1, kpos2};
         compute_reordering(reorder_);
         // Avoid duplicate reinitialize
         initialized = true;
@@ -1443,11 +1465,14 @@ public:
     int get_num_j() { return NUM_J; }
 
     double compute_unscheduled() {
-        taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J}, {taco::Sparse, taco::Sparse}, B, 2);
         result(i, j) = B(i, j, k) * c(k);
         taco::util::Timer timer;
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
+        result.setAssembleWhileCompute(false);
         result.compile();
-        result.assemble();
+        // result.assemble();
         timer.start();
         result.compute();
         timer.stop();
@@ -1474,10 +1499,12 @@ public:
         return sched.split(i, i0, i1, chunk_size_i).fuse(i1, j, f)
             .pos(f, fpos, B(i,j,k))
             .split(fpos, chunk, fpos2, chunk_size_fpos)
-            .split(k, k1, k2, chunk_size_k)
+            .pos(k, kpos, B(i,j,k))
+            .split(kpos, kpos1, kpos2, chunk_size_k)
             .reorder(reorder)
-            .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-            // .parallelize(k2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
+            .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
+            .parallelize(kpos2, ParallelUnit::CPUVector, OutputRaceStrategy::ParallelReduction);
+
 
             // return stmt.fuse(i, j, f)
             //             .pos(f, fpos, B(i,j,k))
@@ -1492,11 +1519,10 @@ public:
         //         .parallelize(chunk, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result, std::vector<int> order, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
-                              int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
-                              int num_reps=5) {
-        // taco::Tensor<double> result({NUM_I, NUM_J}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
-        // taco::Tensor<double> result({NUM_I, NUM_J}, taco::dense);
+    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
+                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false,
+                              int num_reps=10) {
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J}, {taco::Sparse, taco::Sparse}, B, 2);
         result(i, j) = B(i, j, k) * c(k);
 
         // std::cout << "Elements: " << std::endl;
@@ -1506,36 +1532,29 @@ public:
         // std::cout << std::endl;
 
         taco::IndexStmt sched = result.getAssignment().concretize();
-        // std::vector<int> order_{0,1,2};
+        std::vector<int> order_{0,1,2};
         // sched = schedule(sched, order_, chunk_size, omp_scheduling_type, omp_chunk_size, num_threads);
         sched = schedule(sched, order, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, num_threads);
 
-        std::cout << sched <<std::endl;
-
-        if(cold_run) {
-            for(int i = 0; i < 5; i++) {
-                // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
-                compute_cold_run(result, sched);
-            }
+        // if(cold_run) {
+        //     for(int i = 0; i < 5; i++) {
+        //         // taco::Tensor<double> temp_result({NUM_I, NUM_J}, taco::dense);
+        //         compute_cold_run(result, sched);
+        //     }
             cold_run = false;
-        }
+        // }
 
 
-        taco::util::Timer timer;
+	      taco::util::Timer timer;
         std::vector<double> compute_times;
-
-
         timer.clear_cache();
-        result.setAssembleWhileCompute(true);
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
         result.compile(sched);
+//        result.assemble();
         for(int i = 0; i < num_reps; i++) {
-            std::cout << "Inside compute\n";
             timer.start();
             result.setNeedsCompute(true);
-            result.setNeedsAssemble(true);
-            std::cout << "Inside compute\n";
-            // result.assemble();
-            std::cout << "Inside compute\n";
             result.compute();
             timer.stop();
 
@@ -1554,25 +1573,6 @@ public:
             default_compute_time = timer.getResult().mean;
         }
         timer.clear_cache();
-
-
-        // taco::util::Timer timer;
-        // timer.clear_cache();
-        // result.setAssembleWhileCompute(true);
-        //result.compile(sched);
-	//result.setNeedsAssemble(true);
-        // result.assemble();
-        // timer.start();
-        // result.compute();
-        // timer.stop();
-
-        // compute_time = timer.getResult().mean;
-        // if(default_config) {
-        //    default_compute_time = timer.getResult().mean;
-        // }
-        // timer.clear_cache();
-
-
     }
 
     void compute(bool default_config = false) override
@@ -1701,12 +1701,14 @@ public:
     }
 
     double compute_unscheduled() {
-        // taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, taco::dense);
-        taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
+        taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
         result(i,j,l) = B(i,j,k) * C(k,l);
         taco::util::Timer timer;
+        result.setPreserveNonZero(true);
+        result.setAssembleWhileCompute(false);
+        result.setNeedsAssemble(false);
         result.compile();
-        result.assemble();
+//        result.assemble();
         timer.start();
         result.compute();
         timer.stop();
@@ -1737,8 +1739,7 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
-        // taco::Tensor<double> result("result", {NUM_I, NUM_J, NUM_L}, taco::dense);
-  taco::Tensor<double> result({NUM_I, NUM_J, NUM_L}, {taco::ModeFormat::Sparse, taco::ModeFormat::Sparse, taco::ModeFormat::Dense});
+	      taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J, NUM_L}, {taco::Sparse, taco::Sparse, taco::Dense}, B, 2);
         result(i,j,l) = B(i,j,k) * C(k,l);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
@@ -1757,11 +1758,15 @@ public:
         taco::util::Timer timer;
         std::vector<double> compute_times;
         timer.clear_cache();
+        result.setPreserveNonZero(true);
+        result.setNeedsAssemble(false);
         result.compile(sched);
-        result.setNeedsAssemble(true);
-        result.assemble();
+
+//        result.assemble();
         for(int i = 0; i < num_reps; i++) {
             timer.start();
+            result.setPreserveNonZero(true);
+
             result.setNeedsCompute(true);
             result.compute();
             timer.stop();
@@ -1985,7 +1990,6 @@ public:
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int num_threads=32, bool default_config=false, int num_reps=20) {
         taco::Tensor<double> result("result", {NUM_I, NUM_J}, taco::dense);
-        std::cout << "Inside compute sched: " << NUM_J << std::endl;
         // result(i,j,l) = B(i,j,k) * C(k,l);
         // result(i,j) = B(i,k,l) * C(k,j) * D(l,j);
 
@@ -1998,6 +2002,8 @@ public:
         taco::IndexStmt sched = result.getAssignment().concretize();
         // std::vector<int> order_(0,1,2,3,4);
         sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, num_threads);
+
+        std::cout<<sched<<std::endl;
 
         if(cold_run) {
             for(int i = 0; i < 5; i++) {
@@ -2021,6 +2027,8 @@ public:
             timer.stop();
 
             double temp_compute_time = timer.getResult().mean;
+            std::cout << "Inside compute sched: " << temp_compute_time << std::endl;
+        
 
             compute_times.push_back(temp_compute_time);
             if(temp_compute_time > 10000) {
@@ -2053,6 +2061,8 @@ public:
         timer.stop();
 
         compute_time = timer.getResult().mean;
+        std::cout << "Inside compute sched 2: " << compute_time << std::endl;
+        
         if (default_config)
         {
             default_compute_time = timer.getResult().mean;

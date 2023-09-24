@@ -22,6 +22,7 @@
 #include "taco/index_notation/index_notation_rewriter.h"
 #include "taco/index_notation/index_notation_printer.h"
 #include "taco/ir/ir.h"
+#include "taco/lower/lower.h"
 #include "taco/codegen/module.h"
 #include "taco/tensor.h"
 
@@ -32,6 +33,8 @@
 #include "taco/util/collections.h"
 #include "taco/util/functions.h"
 #include "taco/util/env.h"
+#include "taco/lower/mode_format_dense.h"
+#include "taco/lower/mode_format_compressed.h"
 
 using namespace std;
 
@@ -4198,4 +4201,105 @@ IndexStmt generatePackCOOStmt(TensorVar tensor,
 
   return generatePackStmt(tensor, tensorName + "_COO", bufferFormat, indexVars, otherIsOnRight);
 }
+
+bool preservesNonZeroStructure(IndexStmt stmt, NonZeroAnalyzerResult& res) {
+  // TODO (rohany): Handle when the statement can contain workspaces.
+
+  // We have to use a unique_ptr here to get around the overloaded operator=
+  // on Access types.
+  // std::cout << stmt << std::endl;
+  std::unique_ptr<Access> resultAccess = nullptr;
+  Where where = nullptr;
+  // First, let's find the output access.
+  match(stmt, std::function<void(const AssignmentNode*)>([&](const AssignmentNode* node){
+    // There should only be one output access.
+
+    taco_iassert(!resultAccess);
+    resultAccess = std::make_unique<Access>(node->lhs);
+  }),
+  std::function<void(const WhereNode*, Matcher*)>([&](const WhereNode* node, Matcher* ctx){
+      // FIXME (owhsu): Patch to handle where statements with workspaces.
+      // Only need to go to the consumer side since that will
+      // get the outer-most output access
+      ctx->match(node->consumer);
+  }));
+  // Some expressions don't have assignments, and thus won't have an RHS to consider.
+  if (resultAccess == nullptr) {
+    return false;
+  }
+
+  // Now, there can only be one non-dense tensor in the LHS.
+  std::vector<Access> sparseRHSTensors;
+  match(stmt, std::function<void(const AssignmentNode*, Matcher*)>([&](const AssignmentNode* node, Matcher* m) {
+    // Only visit the RHS to ensure that we count only RHS tensors.
+    m->match(node->rhs);
+  }), std::function<void(const AccessNode*)>([&](const AccessNode* node) {
+    bool allDense = true;
+    auto formats = node->tensorVar.getFormat().getModeFormats();
+    for (size_t i = 0; i < formats.size(); i++) {
+      if (!formats[i].is<DenseModeFormat>()) {
+        allDense = false;
+        break;
+      }
+    }
+    if (!allDense) {
+      sparseRHSTensors.push_back(node);
+    }
+  }));
+
+  // If there is more than one sparse tensor in the RHS, then the operation
+  // does not preserve non-zero structure.
+  // TODO (rohany): This is a little too strict. A more general policy would allow
+  //  multiple sparse tensors in the RHS as long the merges occurring with those
+  //  sparse tensors occur at a lower level than the
+  if (sparseRHSTensors.size() != 1) {
+    return false;
+  }
+
+  Access inputAccess(sparseRHSTensors[0]);
+  // Finally, the result access must have the same formats and index
+  // variable accesses as the same sized prefix of the input.
+  // TODO (rohany): This is actually too restrictive of a check. This
+  //  will matter more if we have any benchmarks that do this, but the
+  //  real check is as follows:
+  //  * Some prefix of result matches (in variables and formats) to input.
+  //  * After that prefix, the remaining levels of result must be dense.
+  //  This check allows for the following formats: Result({Sparse, Dense}),
+  //  Input({Sparse}). In this case, the non-zero structure of result is
+  //  in fact determined by the input, and the remaining dimensions of result
+  //  are dense so they don't matter when considering non-zero structure.
+  //  For reference on how to implement something like this, see
+  //  https://github.com/tensor-compiler/taco/compare/parallel-sparse-results.
+  auto rVars = resultAccess->getIndexVars();
+  auto iVars = inputAccess.getIndexVars();
+  auto rFormat = resultAccess->getTensorVar().getFormat().getModeFormats();
+  auto iFormat = inputAccess.getTensorVar().getFormat().getModeFormats();
+
+  // The result tensor must have dimension <= the input dimension.
+  if (rVars.size() > iVars.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < rVars.size(); i++) {
+    if (rVars[i] != iVars[i]) return false;
+    // The mode formats don't have dynamic type tags right now, so
+    // this is all that we can do. We can't just check if they are
+    // exactly equal, because the RectCompressedModeFormats are
+    // parametrized on their dimensionality.
+    if (rFormat[i].is<DenseModeFormat>()) {
+      if (!iFormat[i].is<DenseModeFormat>()) return false;
+    } else if (rFormat[i].is<CompressedModeFormat>()) {
+      if (!iFormat[i].is<CompressedModeFormat>()) return false;
+    } else {
+      return false;
+    }
+  }
+
+  // At this point we are sure that the input statement
+  // has the same output non-zero pattern as the input,
+  // so populate the output and return true.
+  res = NonZeroAnalyzerResult(std::move(resultAccess), std::make_unique<Access>(inputAccess));
+  return true;
+}
+
 }

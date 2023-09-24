@@ -232,10 +232,11 @@ static std::set<Expr> hasSparseInserts(IndexStmt stmt, Iterators iterators,
 
 Stmt
 LowererImplImperative::lower(IndexStmt stmt, string name,
-                   bool assemble, bool compute, bool pack, bool unpack)
+                   bool assemble, bool compute, bool pack, bool unpack, bool enablePreserveNonZeros)
 {
   this->assemble = assemble;
   this->compute = compute;
+  this->enablePreserveNonZeros = enablePreserveNonZeros;
   definedIndexVarsOrdered = {};
   definedIndexVars = {};
   loopOrderAllowsShortCircuit = allForFreeLoopsBeforeAllReductionLoops(stmt);
@@ -296,6 +297,14 @@ LowererImplImperative::lower(IndexStmt stmt, string name,
 
   // Create variables for keeping track of result values array capacity
   createCapacityVars(resultVars, &capacityVars);
+
+  // Figure out whether we can preserve the non-zero structure
+  // of an input tensor for the result tensor. However, to ensure
+  // that we don't break normal TACO usage, we'll only do this
+  // when enabled.
+  if (this->enablePreserveNonZeros) {
+    this->preservesNonZeros = preservesNonZeroStructure(stmt, this->nonZeroAnalyzerResult);
+  }
 
   // Create iterators
   iterators = Iterators(stmt, tensorVars);
@@ -2075,14 +2084,48 @@ Stmt LowererImplImperative::lowerForallBody(Expr coordinate, IndexStmt stmt,
                                   const set<Access>& reducedAccesses, 
                                   MergeStrategy mergeStrategy) {
 
-  // Inserter positions
-  Stmt declInserterPosVars = declLocatePosVars(inserters);
+  // If we're performing the optimization that allows for the non-zero structure
+  // of an input tensor to be maintained in the result tensor, then we need to
+  // do some cleanup here before dealing with appenders and inserters. In particular,
+  // the iterator for the result tensor will be an appender (as it is sparse), but
+  // will not quite be a inserter or locator, as it is tracking the variables from
+  // the input tensor it is aligned with. Therefore, we will just ignore generating
+  // appender related code for the result tensor in this case.
+  Iterator resultNonZeroIter;
+  if (this->preservesNonZeros) {
+    std::vector<Iterator> realAppenders;
+    for (auto &iter : appenders) {
+      if (iter.getTensor() != this->tensorVars[this->nonZeroAnalyzerResult.resultAccess->getTensorVar()]) {
+        realAppenders.push_back(iter);
+      } else {
+        resultNonZeroIter = iter;
+      }
+    }
+    appenders = realAppenders;
+  }
 
-  // Locate positions
-  Stmt declLocatorPosVars = declLocatePosVars(locators);
+  // There can be overlaps between the inserters and locators, which results in
+  // duplicate emitting of variable declarations. We'll fix that here.
+  std::vector<Iterator> itersWithLocators;
+  for (auto it : inserters) {
+    if (!util::contains(itersWithLocators, it)) { itersWithLocators.push_back(it); }
+  }
+  for (auto it : locators) {
+    if (!util::contains(itersWithLocators, it)) { itersWithLocators.push_back(it); }
+  }
+  auto declPosVars = declLocatePosVars(itersWithLocators);
+
+  Stmt trackPosVars;
+  if (this->preservesNonZeros && resultNonZeroIter.defined()) {
+    if (resultNonZeroIter.hasPosIter()) {
+      auto tracking = resultNonZeroIter.getTrackingIterator();
+      taco_iassert(tracking.defined());
+      trackPosVars = ir::VarDecl::make(resultNonZeroIter.getPosVar(), tracking.getPosVar());
+    }
+  }
 
   if (captureNextLocatePos) {
-    capturedLocatePos = Block::make(declInserterPosVars, declLocatorPosVars);
+    capturedLocatePos = declPosVars;
     captureNextLocatePos = false;
   }
 
@@ -2111,7 +2154,7 @@ Stmt LowererImplImperative::lowerForallBody(Expr coordinate, IndexStmt stmt,
     append(stmts, loweredCases);
     Stmt body = Block::make(stmts);
 
-    return Block::make(declInserterPosVars, declLocatorPosVars, body);
+    return Block::make(declPosVars, trackPosVars, body);
   }
 
   Stmt initVals = resizeAndInitValues(appenders, reducedAccesses);
@@ -2137,8 +2180,8 @@ Stmt LowererImplImperative::lowerForallBody(Expr coordinate, IndexStmt stmt,
   // TODO: Emit code to insert coordinates
 
   return Block::make(initVals,
-                     declInserterPosVars,
-                     declLocatorPosVars,
+                     declPosVars,
+                     trackPosVars,
                      body,
                      appendCoords,
                      incr);

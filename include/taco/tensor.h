@@ -479,6 +479,8 @@ public:
   /* --- Friend Functions    --- */
   /// True iff two tensors have the same type and the same values.
   friend bool equals(const TensorBase&, const TensorBase&);
+  friend bool equalsInt64(const TensorBase&, const TensorBase&);
+
 
   /// True iff two TensorBase objects refer to the same tensor (TensorBase
   /// and Tensor objects are references to tensors).
@@ -501,6 +503,7 @@ public:
   std::vector<TensorBase> getDependentTensors();
   void setNeedsCompute(bool needsCompute);
   void setNeedsAssemble(bool needsAssemble);
+  void setPreserveNonZero(bool preserveNonZero);
 private:
   static std::shared_ptr<ir::Module> getHelperFunctions(
       const Format& format, Datatype ctype, const std::vector<int>& dimensions);
@@ -916,6 +919,7 @@ struct TensorBase::Content {
   bool               needsCompile;
   bool               needsAssemble;
   bool               needsCompute;
+  bool               preserveNonZero;
   std::vector<std::weak_ptr<TensorBase::Content>> dependentTensors;
   unsigned int       uniqueId;
 
@@ -1337,6 +1341,65 @@ void taco_set_num_threads(int num_threads);
 /// Get maximum number of threads to use for parallel execution of tensor 
 /// computations. This will be replaced by a scheduling language in the future.
 int taco_get_num_threads();
+
+
+// copyNonZeroStructure copies the non-zero structure of the src tensor into a new
+// tensor, but does not copy the values. This method is intended to be used in the case
+// where the result tensor of a computation has a sparse output with non-zero structure
+// identical to an input tensor's non-zero structure.
+template<typename T>
+Tensor<T> copyNonZeroStructure(std::vector<int> resDims, Format format, Tensor<T> src, int srcLevels)  {
+
+  // Double check that the result format is a prefix of the source format.
+  taco_uassert(src.getFormat().getOrder() >= srcLevels);
+  taco_uassert(format.getOrder() >= srcLevels);
+
+  for (size_t i = 0; i < (size_t)srcLevels; i++) {
+    taco_uassert(resDims[i] == src.getDimensions()[i]);
+    taco_uassert(format.getModeFormats()[i] == src.getFormat().getModeFormats()[i]);
+  }
+
+  Tensor<T> result(resDims, format);
+  auto srcIndex = src.getStorage().getIndex();
+  auto rFormat = format.getModeFormats();
+  std::vector<ModeIndex> resModeIndex;
+  for (size_t level = 0; level < (size_t)srcLevels; level++) {
+    auto srcModeIndex = srcIndex.getModeIndex(level);
+    resModeIndex.push_back(srcModeIndex);
+  }
+
+  // Need to keep track of new size starting with size of previous crd array
+  int denseSize = srcIndex.getModeIndex(srcLevels - 1).getIndexArray(1).getSize();
+  for (size_t level = srcLevels; level < (size_t) format.getOrder(); level++) {
+    taco_uassert(rFormat[level] == taco::Dense) << "Can only have dense levels after sparse levels";
+    Type rType = result.getTensorVar().getType();
+    denseSize = denseSize * resDims[level];
+    int sizeArr [1] = {resDims[level]};
+    auto arr = makeArray<int>((int*)sizeArr, (size_t)1);
+    std::vector<Array> denseArr;
+    denseArr.push_back(arr);
+    ModeIndex rMI(denseArr);
+    resModeIndex.push_back(rMI);
+  }
+
+  // TODO (owhsu): Need to figure out why the dense arrays added afterwards
+  //  don't seem to be correct (i.e. index l for TTM)
+  //  even though when the Array data (above) is printed here, they seem correct.
+  Index resultIndex(format, resModeIndex);
+  result.getStorage().setIndex(resultIndex);
+
+  // Perform a similar operation as above but for the values array.
+  // However, we only need to construct the values, not copy anything into them.
+  auto srcVals = src.getStorage().getValues();
+  auto srcType = srcVals.getType();
+  auto srcSize = denseSize;
+  //   Array(Datatype type, void* data, size_t size, Policy policy=Free);
+  Array resVals = makeArray(srcType, srcSize);
+  result.getStorage().setValues(resVals);
+  return result;
+}
+
+// TODO (owhsu): See if we need a function to copy the nonzero structure
 
 }
 #endif

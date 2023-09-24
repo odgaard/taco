@@ -217,6 +217,11 @@ public:
   /// backing the index set.
   Iterator getIndexSetIterator() const;
 
+  // getTrackingIterator returns the iterator that the current iterator is tracking. This
+  // is used to implement an optimization for when the non-zero structure of the output
+  // is the same as one of the input tensors.
+  Iterator getTrackingIterator() const;
+
   friend bool operator==(const Iterator&, const Iterator&);
   friend bool operator<(const Iterator&, const Iterator&);
   friend std::ostream& operator<<(std::ostream&, const Iterator&);

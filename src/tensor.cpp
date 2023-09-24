@@ -60,7 +60,7 @@ TensorBase::TensorBase(std::string name, Datatype ctype)
     : TensorBase(name, ctype, {}, Format(), Literal::zero(ctype))  {
 }
 
-TensorBase::TensorBase(Datatype ctype, vector<int> dimensions, 
+TensorBase::TensorBase(Datatype ctype, vector<int> dimensions,
                        ModeFormat modeType, Literal fill)
     : TensorBase(util::uniqueName('A'), ctype, dimensions, 
                  std::vector<ModeFormatPack>(dimensions.size(), modeType), fill) {
@@ -223,6 +223,10 @@ void TensorBase::setNeedsAssemble(bool needsAssemble) {
 
 void TensorBase::setNeedsCompute(bool needsCompute) {
   content->needsCompute = needsCompute;
+}
+
+void TensorBase::setPreserveNonZero(bool preserveNonZero) {
+  content->preserveNonZero = preserveNonZero;
 }
 
 bool TensorBase::neverPacked() {
@@ -672,13 +676,21 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
     }
   }
 
-  content->assembleFunc = lower(stmtToCompile, "assemble", true, false);
-  content->computeFunc = lower(stmtToCompile, "compute",  assembleWhileCompute, true);
+  if (content->preserveNonZero) {
+    content->assembleFunc = lower(stmtToCompile, "assemble", true, false, false,
+                                  false, true);
+    content->computeFunc = lower(stmtToCompile, "compute", assembleWhileCompute, true,
+                                 false, false, true);
+  } else {
+    content->assembleFunc = lower(stmtToCompile, "assemble", true, false);
+    content->computeFunc = lower(stmtToCompile, "compute", assembleWhileCompute, true);
+  }
   // If we have to recompile the kernel, we need to create a new Module. Since
   // the module we are holding on to could have been retrieved from the cache,
   // we can't modify it.
   content->module = make_shared<Module>();
-  content->module->addFunction(content->assembleFunc);
+  if (!content->preserveNonZero)
+    content->module->addFunction(content->assembleFunc);
   content->module->addFunction(content->computeFunc);
   content->module->compile();
   cacheComputeKernel(concretizedAssign, content->module);
@@ -1065,6 +1077,55 @@ bool scalarEquals(std::complex<T> a, std::complex<T> b) {
 }
 
 template<typename T>
+bool equalsTypedInt64(const TensorBase& a, const TensorBase& b) {
+  auto at = iterate<T>(a);
+  auto bt = iterate<T>(b);
+  auto ait = at.template beginTyped<int64_t>();
+  auto bit = bt.template beginTyped<int64_t>();
+
+  while (ait != at.template endTyped<int64_t>() && bit != bt.template endTyped<int64_t>()) {
+    auto acoord = ait->first;
+    auto bcoord = bit->first;
+    auto aval = ait->second;
+    auto bval = bit->second;
+
+    if (acoord != bcoord) {
+      if (isZero(aval)) {
+        ++ait;
+        continue;
+      }
+      else if (isZero(bval)) {
+        ++bit;
+        continue;
+      }
+
+      return false;
+    }
+    if (!scalarEquals(aval, bval)) {
+      return false;
+    }
+
+    ++ait;
+    ++bit;
+  }
+  while (ait != at.template endTyped<int64_t>()) {
+    auto aval = ait->second;
+    if (!isZero(aval)) {
+      return false;
+    }
+    ++ait;
+  }
+  while (bit != bt.template endTyped<int64_t>()) {
+    auto bval = bit->second;
+    if (!isZero(bval)) {
+      return false;
+    }
+    ++bit;
+  }
+  return (ait == at.template endTyped<int64_t>() && bit == bt.template endTyped<int64_t>());
+}
+
+template<typename T>
 bool equalsTyped(const TensorBase& a, const TensorBase& b) {
   auto at = iterate<T>(a);
   auto bt = iterate<T>(b);
@@ -1111,6 +1172,52 @@ bool equalsTyped(const TensorBase& a, const TensorBase& b) {
     ++bit;
   }
   return (ait == at.end() && bit == bt.end());
+}
+
+bool equalsInt64(const TensorBase& a, const TensorBase& b) {
+  // Component type must be the same
+  if (a.getComponentType() != b.getComponentType()) {
+    return false;
+  }
+
+  // Fill values must be the same
+  if (!equals(a.getFillValue(), b.getFillValue())) {
+    return false;
+  }
+
+  // Orders must be the same
+  if (a.getOrder() != b.getOrder()) {
+    return false;
+  }
+
+  // Dimensions must be the same
+  for (int mode = 0; mode < a.getOrder(); mode++) {
+    if (a.getDimension(mode) != b.getDimension(mode)) {
+      return false;
+    }
+  }
+
+  // Values must be the same
+  switch(a.getComponentType().getKind()) {
+    case Datatype::Bool: taco_ierror; return false;
+    case Datatype::UInt8: return equalsTypedInt64<uint8_t>(a, b);
+    case Datatype::UInt16: return equalsTypedInt64<uint16_t>(a, b);
+    case Datatype::UInt32: return equalsTypedInt64<uint32_t>(a, b);
+    case Datatype::UInt64: return equalsTypedInt64<uint64_t>(a, b);
+    case Datatype::UInt128: return equalsTypedInt64<unsigned long long>(a, b);
+    case Datatype::Int8: return equalsTypedInt64<int8_t>(a, b);
+    case Datatype::Int16: return equalsTypedInt64<int16_t>(a, b);
+    case Datatype::Int32: return equalsTypedInt64<int32_t>(a, b);
+    case Datatype::Int64: return equalsTypedInt64<int64_t>(a, b);
+    case Datatype::Int128: return equalsTypedInt64<long long>(a, b);
+    case Datatype::Float32: return equalsTypedInt64<float>(a, b);
+    case Datatype::Float64: return equalsTypedInt64<double>(a, b);
+    case Datatype::Complex64: return equalsTypedInt64<std::complex<float>>(a, b);
+    case Datatype::Complex128: return equalsTypedInt64<std::complex<double>>(a, b);
+    case Datatype::Undefined: taco_ierror << "Undefined data type";
+  }
+  taco_unreachable;
+  return false;
 }
 
 bool equals(const TensorBase& a, const TensorBase& b) {

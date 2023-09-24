@@ -44,8 +44,11 @@ struct Iterator::Content {
     Window(ir::Expr _lo, ir::Expr _hi, ir::Expr _stride, ir::Expr _windowVar) :
       windowVar(_windowVar), lo(_lo), hi(_hi), stride(_stride) {};
   };
-  std::unique_ptr<Window> window;
+  std::shared_ptr<Window> window;
   Iterator indexSetIterator;
+  
+  // The iterator that this iterator is tracking, if any
+  Iterator trackingIterator;
 };
 
 Iterator::Iterator() : content(nullptr) {
@@ -452,7 +455,7 @@ bool Iterator::isStrided() const {
 void Iterator::setWindowBounds(ir::Expr lo, ir::Expr hi, ir::Expr stride) {
   auto windowVarName = this->getIndexVar().getName() + this->getMode().getName() + "_window";
   auto wvar = ir::Var::make(windowVarName, Int());
-  this->content->window = std::make_unique<Content::Window>(Content::Window(lo, hi, stride, wvar));
+  this->content->window = std::make_shared<Content::Window>(Content::Window(lo, hi, stride, wvar));
 }
 
 bool Iterator::hasIndexSet() const {
@@ -465,6 +468,10 @@ Iterator Iterator::getIndexSetIterator() const {
 
 void Iterator::setIndexSetIterator(Iterator iter) {
   this->content->indexSetIterator = iter;
+}
+
+Iterator Iterator::getTrackingIterator() const {
+  return this->content->trackingIterator;
 }
 
 bool operator==(const Iterator& a, const Iterator& b) {
@@ -521,6 +528,12 @@ Iterators::Iterators(IndexStmt stmt, const map<TensorVar, Expr>& tensorVars)
   ProvenanceGraph provGraph = ProvenanceGraph(stmt);
   set<IndexVar> underivedAdded;
   set<IndexVar> computeVars;
+
+  // Figure out whether we are able to get away with keeping the non-zero
+  // structure of the input for the output tensor.
+  NonZeroAnalyzerResult nonZeroResult;
+  auto preservesNonZeros = preservesNonZeroStructure(stmt, nonZeroResult);
+
   // Create dimension iterators
   match(stmt,
     function<void(const ForallNode*, Matcher*)>([&](auto n, auto m) {
@@ -562,6 +575,23 @@ Iterators::Iterators(IndexStmt stmt, const map<TensorVar, Expr>& tensorVars)
     })
   );
 
+  if (preservesNonZeros) {
+    // If our output preserves the non-zero structure of the input
+    // tensor, then we'll modify the result iterator to track variables
+    // of the input tensor that control iteration. However, information
+    // about the mode etc will be retained.
+    auto resultTV = nonZeroResult.resultAccess->getTensorVar();
+    auto inputTV = nonZeroResult.inputAccess->getTensorVar();
+
+    for (int i = 0; i < resultTV.getOrder(); i++) {
+        auto resultIter = this->content->levelIterators[{*nonZeroResult.resultAccess, i+1}];
+        auto inputIter = this->content->levelIterators[{*nonZeroResult.inputAccess, i+1}];
+        taco_iassert(resultIter.defined());
+        taco_iassert(inputIter.defined());
+        resultIter.content->trackingIterator = inputIter;
+    }
+  }
+
   // Reverse the levelIterators map for fast modeAccess lookup
   for (auto& iterator : content->levelIterators) {
     content->modeAccesses.insert({iterator.second, iterator.first});
@@ -582,6 +612,33 @@ void Iterators::createAccessIterators(Access access, Format format, Expr tensorI
 
   int level = 1;
   ModeFormat parentModeType;
+
+  // (owhsu) TODO: See if this needs to be uncommented out
+  // From rohany patch for nonzero structure support
+//  // This logic is for setting up iterators for pos splits. In a fused position split,
+//  // the original logic assigned all level iterators to have the index variable of the
+//  // fused pos split. This logic seems incorrect. Instead, having only the deepest level
+//  // that the pos split occurred use that index variable seemed like the right thing to
+//  // satisfy how the code was used in lowerForallFusedPosition. This block attempts to
+//  // find the deepest match for the position split in the coordinate tree of the tensor.
+//  int deepestPosMatch = -1;
+//  {
+//    int counter = 0;
+//    for (auto modeTypePack : format.getModeFormatPacks()) {
+//      taco_iassert(modeTypePack.getModeFormats().size() == 1);
+//      for (auto& modeType : modeTypePack.getModeFormats()) {
+//        int modeNumber = format.getModeOrdering()[counter];
+//        IndexVar indexVar = access.getIndexVars()[modeNumber];
+//        IndexVar iteratorIndexVar;
+//        if (provGraph.getPosIteratorDescendant(indexVar, &iteratorIndexVar) &&
+//            provGraph.isPosOfAccess(iteratorIndexVar, access)) {
+//          deepestPosMatch = std::max(deepestPosMatch, modeNumber);
+//        }
+//      }
+//      counter++;
+//    }
+//  }
+
   for (ModeFormatPack modeTypePack : format.getModeFormatPacks()) {
     vector<Expr> arrays;
     taco_iassert(modeTypePack.getModeFormats().size() > 0);
@@ -604,6 +661,15 @@ void Iterators::createAccessIterators(Access access, Format format, Expr tensorI
       else if (!provGraph.isPosOfAccess(iteratorIndexVar, access)) {
         // want to iterate across level as a position variable if has irregular descendant, but otherwise iterate normally
         iteratorIndexVar = indexVar;
+
+        // TODO (owhsu): See if this needs to be uncommented out
+        // From rohany support sparse output nonzero structure preserved
+//        IndexVar posFuseVar;
+//        IndexVar iteratorIndexVar = indexVar;
+//        // As described above, only set the deepest position split match to be the fused iterator.
+//        if (provGraph.getPosIteratorDescendant(indexVar, &posFuseVar) &&
+//            provGraph.isPosOfAccess(posFuseVar, access) && modeNumber == deepestPosMatch) {
+//          iteratorIndexVar = posFuseVar;
       }
       Mode mode(tensorIR, dim, level, modeType, modePack, pos,
                 parentModeType);
