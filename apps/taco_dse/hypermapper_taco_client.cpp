@@ -185,10 +185,6 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 
   HMScenario["output_data_file"] =
       OutputFoldername + "/" + AppName + "_" +  optimization + count + "_output_data.csv";
-  HMScenario["output_pareto_file"] =
-      OutputFoldername + "/" + AppName + "_output_pareto.csv";
-  HMScenario["output_image"]["output_image_pdf_file"] =
-      OutputFoldername + "_" + AppName + "_output_image.pdf";
 
   // save the completed json file in the output directory
   ofstream HyperMapperScenarioFile;
