@@ -1,0 +1,122 @@
+{
+    "application_name": "cpp_taco_SpMM",
+    "design_of_experiment": {
+        "doe_type": "random sampling",
+        "number_of_samples": 4
+    },
+    "hypermapper_mode": {
+        "mode": "client-server"
+    },
+    "input_parameters": {
+        "chunk_size": {
+            "constraints": [
+                "chunk_size % 2 == 0"
+            ],
+            "parameter_type": "ordinal",
+            "parameter_default": 16,
+            "transform": "log",
+            "values": [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+        },
+        "permutation": {
+            "parameter_type": "permutation",
+            "parametrization": "spearman",
+            "parameter_default": [0,1,2,3,4],
+            "values": [
+                5
+            ],
+            "constraints": [
+                "permutation_i0 < permutation_i3",
+                "permutation_i1 < permutation_i3",
+                "permutation_i0 < permutation_i2",
+                "permutation_i1 < permutation_i2",
+                "(permutation_i3 < permutation_i2) | (permutation_i3 < permutation_i4)"
+            ]
+        },
+        "omp_chunk_size": {
+            "constraints": [
+                "(omp_chunk_size % 2 == 0) | (omp_chunk_size == 1)"
+            ],
+            "parameter_type": "ordinal",
+            "parameter_default": 1,
+            "transform": "log",
+            "values": [
+                1,
+                2,
+                4,
+                8,
+                16,
+                32,
+                64,
+                128,
+                256
+            ]
+        },
+        "omp_num_threads": {
+            "parameter_type": "ordinal",
+            "parameter_default": 32,
+            "transform": "log",
+            "values": [
+                1,
+                2,
+                4,
+                8,
+                16,
+                32,
+                64
+            ]
+        },
+        "omp_scheduling_type": {
+            "parameter_default": 0,
+            "parameter_type": "ordinal",
+            "values": [0,1]
+        },
+        "unroll_factor": {
+            "constraints": [
+                "unroll_factor < chunk_size",
+                "unroll_factor % 2 == 0"
+            ],
+            "dependencies": [
+                "chunk_size"
+            ],
+            "parameter_type": "ordinal",
+            "parameter_default": 8,
+            "transform": "log",
+            "values": [
+                2,
+                4,
+                8,
+                16,
+                32,
+                64,
+                128,
+                256,
+                512,
+                1024
+            ]
+        }
+    },
+    "lengthscale_prior": {
+        "name": "gamma",
+        "parameters": [
+            1.0,
+            0.003
+        ]
+    },
+    "models": {
+        "model": "gaussian_process"
+    },
+    "noise_prior": {
+        "name": "gamma",
+        "parameters": [
+            1.1,
+            0.05
+        ]
+    },
+    "outputscale_prior": {
+        "name": "gamma",
+        "parameters": [
+            2.0,
+            0.15
+        ]
+    }
+}

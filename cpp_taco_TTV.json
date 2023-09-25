@@ -1,0 +1,81 @@
+{
+    "application_name": "cpp_taco_TTV",
+    "design_of_experiment": {
+        "doe_type": "random sampling",
+        "number_of_samples": 8
+    },
+    "hypermapper_mode": {
+        "mode": "client-server"
+    },
+    "input_parameters": {
+        "chunk_size_fpos": {
+            "parameter_type": "ordinal",
+            "parameter_default": 2,
+            "transform": "log",
+            "values": [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+        },
+        "chunk_size_i": {
+            "parameter_type": "ordinal",
+            "parameter_default": 4,
+            "transform": "log",
+            "values": [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+        },
+        "chunk_size_k": {
+            "parameter_type": "ordinal",
+            "parameter_default": 8,
+            "transform": "log",
+            "values": [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+        },
+        "omp_chunk_size": {
+            "parameter_type": "ordinal",
+            "parameter_default": 1,
+            "transform": "log",
+            "values": [
+                1,
+                2,
+                4,
+                8,
+                16,
+                32,
+                64,
+                128,
+                256
+            ]
+        },
+        "omp_num_threads": {
+            "parameter_type": "ordinal",
+            "parameter_default": 32,
+            "transform": "log",
+            "values": [
+                1,
+                2,
+                4,
+                8,
+                16,
+                32,
+                64
+            ]
+        },
+        "omp_scheduling_type": {
+            "parameter_default": 0,
+            "parameter_type": "ordinal",
+            "values": [0,1]
+        },
+        "permutation": {
+            "parameter_type": "permutation",
+            "parametrization": "spearman",
+            "parameter_default": [0,1,2,3,4],
+            "values": [
+                5
+            ],
+	    "constraints": [
+		"(permutation_0 == 4) | ((permutation_0 == 0) & (permutation_1 == 1)) | ((permutation_0 == 1) & (permutation_1 == 0)) | ((permutation_0 == 0) & (permutation_1 == 4)) | ((permutation_0 == 1) & (permutation_1 == 4))"
+	    ]
+        }
+    },
+    "models": {
+        "model": "gaussian_process"
+    },
+    "log_transform_output": true,
+    "epsilon_greedy_threshold": 0
+}
