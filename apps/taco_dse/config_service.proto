@@ -2,6 +2,15 @@ syntax = "proto3";
 
 service ConfigurationService {
   rpc RunConfigurationsClientServer (ConfigurationRequest) returns (ConfigurationResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message ShutdownRequest {
+    bool shutdown = 1;  // flag indicating client is finished and server should shutdown
+}
+
+message ShutdownResponse {
+    bool success = 1;  // flag indicating server acknowledged shutdown request
 }
 
 message ConfigurationRequest {

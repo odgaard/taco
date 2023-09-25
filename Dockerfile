@@ -1,36 +1,48 @@
 # Use a smaller base image
-FROM python:3.9-slim-buster
+FROM ubuntu:20.04
 
-ENV HYPERMAPPER_HOME=/app/hypermapper_dev \
-    SUITESPARSE_PATH=/app/data/suitesparse \
+ENV SUITESPARSE_PATH=/app/data/suitesparse \
     FROST_PATH=/app/data/FROSTT \
     DEBIAN_FRONTEND=noninteractive
 
 # Set the working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
-COPY hypermapper_dev/requirements.txt .
-
 # Install dependencies
 RUN apt-get update && apt-get install -y \
+  apt-utils \
   build-essential \
   cmake \
   git \
   curl \
   unzip \
   libomp-dev \
-  python3-dev \
   zlib1g-dev \
   libssl-dev \
+  libprotobuf-dev \
+  protobuf-compiler \
   libopenmpi-dev && \
-  pip install -r requirements.txt && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copy current directory files to docker
-COPY . .
+# Clone and build protobuf from source
+RUN git clone https://github.com/protocolbuffers/protobuf.git && \
+    cd protobuf && \
+    git checkout v3.17.3 && \
+    mkdir build && cd build && \
+    cmake ../cmake/ -Dprotobuf_BUILD_TESTS=OFF && \
+    make -j8 && \
+    make install && \
+    cd ../.. && \
+    rm -rf protobuf
 
+RUN git clone --recurse-submodules -b v1.56.0 --depth 1 --shallow-submodules https://github.com/grpc/grpc
+
+# Copy current directory files to docker
+COPY grpc_install.sh .
+RUN ./grpc_install.sh
+
+COPY . .
 # Create build directory, build the project, and clean up
 RUN mkdir build && \
     cd build && \
@@ -41,4 +53,9 @@ RUN mkdir build && \
 
 # Here we assume that "cpp_taco_*" files are meant to stay in "/app/build". 
 # If that's not the case, please adjust the path accordingly.
+
+COPY run_taco.sh .
+ENTRYPOINT ["./run_taco.sh"]
+CMD ["-mat", "Goodwin_040/Goodwin_040.mtx", "--method", "random", "-o", "SpMM"]
+
 

@@ -34,6 +34,8 @@
 #include <string>
 #include <grpcpp/grpcpp.h>
 #include <typeinfo>
+#include <condition_variable>
+#include <mutex>
 #include "config_service.grpc.pb.h" // The generated header from the .proto file
 
 
@@ -65,6 +67,10 @@ int num_i = 0;
 int num_j = 0;
 std::string op;
 int num_reps;
+
+std::condition_variable shutdown_cv;
+std::mutex shutdown_mutex;
+bool shutdown_flag = false;
 
 struct popen2 {
   pid_t child_pid;
@@ -228,6 +234,7 @@ public:
 
         std::cout << "Received output_data_file: " << request->output_data_file() << std::endl;
         //printHMInputParamBaseVector(m_InParams);
+
         HMObjective obj;
         try {
             obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
@@ -245,8 +252,13 @@ public:
         metric.add_values(obj.compute_time); // Mocked value
         response->add_metrics()->CopyFrom(metric);
 
+        // Get current time in milliseconds since the epoch
+        auto now = std::chrono::system_clock::now();
+        auto epoch = now.time_since_epoch();
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(epoch);
+
         Timestamp timestamp;
-        timestamp.set_timestamp(12345678); // Mocked timestamp
+        timestamp.set_timestamp(milliseconds.count()); 
         response->mutable_timestamps()->CopyFrom(timestamp);
 
         Feasible feasible;
@@ -254,6 +266,16 @@ public:
         response->mutable_feasible()->CopyFrom(feasible);
 
         return Status::OK;
+    }
+    grpc::Status Shutdown(grpc::ServerContext* context, const ShutdownRequest* request,
+                          ShutdownResponse* response) override {
+        if (request->shutdown()) {
+            std::unique_lock<std::mutex> lock(shutdown_mutex);
+            shutdown_flag = true;  // Set the shutdown flag
+            shutdown_cv.notify_one();  // Notify the waiting server thread
+        }
+        response->set_success(true);  // Acknowledge the shutdown request
+        return grpc::Status::OK;
     }
 };
 
@@ -1405,7 +1427,11 @@ int main(int argc, char **argv) {
     std::unique_ptr<Server> server(builder.BuildAndStart());
     std::cout << "Server listening on " << server_address << std::endl;
 
-    server->Wait();
+    std::unique_lock<std::mutex> lock(shutdown_mutex);
+    shutdown_cv.wait(lock, []{ return shutdown_flag; });  // Wait for shutdown signal
+
+    server->Shutdown();  // Shutdown the server
+    server->Wait();  // Optionally wait for all RPC processing to finish
   } else {
     // Launch HyperMapper
     std::string cmd("python ");

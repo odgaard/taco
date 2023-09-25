@@ -144,6 +144,7 @@ TensorBase::TensorBase(string name, Datatype ctype, vector<int> dimensions,
   content->needsCompile = false;
   content->needsAssemble = false;
   content->needsCompute = false;
+  content->preserveNonZero = false;
 
   content->coordinateBuffer = shared_ptr<vector<char>>(new vector<char>);
   content->coordinateBufferUsed = 0;
