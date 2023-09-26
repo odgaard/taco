@@ -17,8 +17,6 @@ def benchmark_run(mat, benchmark, method="random"):
         json = f"{json_base_path}/{mat}/{method}/{json_end_path}"
 
     benchmark_runner.run_program(runtime, mat_path, method, benchmark, taco_image, hypermapper_image, json, ("taco"))
-    benchmark_runner.run_program(runtime, mat_path, method, benchmark, taco_image, hypermapper_image, json, ("hypermapper"))
-
 
 if __name__ == "__main__":
     benchmark_run("Goodwin_040", "SpMM")

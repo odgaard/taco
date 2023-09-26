@@ -16,7 +16,6 @@ def benchmark_run(mat, benchmark, method="random"):
         mat_path = f"{mat}/{mat}.mtx"
         json = f"{json_base_path}/{mat}/{method}/{json_end_path}"
 
-    benchmark_runner.run_program(runtime, mat_path, method, benchmark, taco_image, hypermapper_image, json, ("taco"))
     benchmark_runner.run_program(runtime, mat_path, method, benchmark, taco_image, hypermapper_image, json, ("hypermapper"))
 
 
