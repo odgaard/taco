@@ -1,5 +1,6 @@
 import os
-import docker
+#import docker
+import subprocess
 import argparse
 import concurrent.futures
 
@@ -18,17 +19,18 @@ class SingularityRunner:
             '--method', method_val,
             '-o', o_val
         ]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        print(command)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.containers.append(process)
         return process
 
     def run_container_hypermapper(self, command, image_name, json_file):
         singularity_cmd = [
-            'singularity', 'run',
+            'apptainer', 'run',
             '--bind', f"{os.path.join(os.getcwd(), 'build/experiments')}:/app/build/experiments",
             image_name
         ] + command  # appending command list to singularity command
-        process = subprocess.Popen(singularity_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(singularity_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.containers.append(process)
         return process
 

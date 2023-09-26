@@ -2,9 +2,9 @@ import benchmark_runner
 
 def benchmark_run(mat, benchmark, method="random"):
     # hard-coded values
-    runtime = "docker"
-    taco_image = "odgaard/bacobench:0.0.7"
-    hypermapper_image = "odgaard/hypermapper-grpc:0.0.2"
+    runtime = "singularity"
+    taco_image = "odgaard/bacobench-taco:0.0.1"
+    hypermapper_image = "odgaard/bacobench-hypermapper:0.0.1"
 
     json_base_path = f"build/experiments/outdata_{benchmark}_{mat}"
     json_end_path = f"cpp_taco_{benchmark}_{method}/cpp_taco_{benchmark}_{method}_scenario.json"
