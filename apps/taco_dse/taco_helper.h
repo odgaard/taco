@@ -445,8 +445,8 @@ public:
         result.setNeedsAssemble(true);
         for(int i = 0; i < num_reps; i++) {
             result.setNeedsCompute(true);
-            timer.start();
             result.assemble();
+            timer.start();
             result.compute();
             timer.stop();
 
