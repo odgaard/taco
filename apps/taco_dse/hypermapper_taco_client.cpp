@@ -37,7 +37,10 @@
 #include <condition_variable>
 #include <mutex>
 #include "config_service.grpc.pb.h" // The generated header from the .proto file
-
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
@@ -121,7 +124,6 @@ void setParameterValue(HMInputParamBase *param, const T &value) {
                 std::vector<int> vecValue(value.begin(), value.end());
                 HMInputParam<std::vector<int>>* typed_param = static_cast<HMInputParam<std::vector<int>>*>(param);
                 typed_param->setVal(vecValue);
-                std::cout << paramValueToString(typed_param) << std::endl;
             } else {
                 std::cout << "Unknown set parameter type: " << typeid(ValueType).name() << std::endl;
             }
@@ -200,9 +202,12 @@ public:
     Status RunConfigurationsClientServer(ServerContext* context, 
                                          const ConfigurationRequest* request, 
                                          ConfigurationResponse* response) override {
+        char hostname[HOST_NAME_MAX];
+        char username[LOGIN_NAME_MAX];
+        int result_code = gethostname(hostname, HOST_NAME_MAX);
         // Access and process the configurations:
         const Configuration& config = request->configurations();
-        std::cout << "Config received" << std::endl;
+        //std::cout << "[" << hostname << "]: " << "Config received" << std::endl;
         // Inside your loop:
         for (const auto& param : config.parameters()) {
             const std::string& param_name = param.first;
@@ -236,7 +241,7 @@ public:
             }
         }
 
-        std::cout << "Received output_data_file: " << request->output_data_file() << std::endl;
+        //std::cout << "Received output_data_file: " << request->output_data_file() << std::endl;
         //printHMInputParamBaseVector(m_InParams);
 
         HMObjective obj;
@@ -252,17 +257,7 @@ public:
         
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
-        std::cout << "Obj results:" << std::endl;
-        std::cout << local_results.median << std::endl;
-        std::cout << med(local_results.energy_consumptions) << std::endl;
-        for (double value : local_results.times) {
-            std::cout << value << " ";
-        }
-        std::cout << "\n";
-        for (double value : local_results.energy_consumptions) {
-            std::cout << value << " ";
-        }
-        std::cout << "\n";
+        std::cout << "[" << hostname << "]: " << local_results.median << ", " << med(local_results.energy_consumptions) << std::endl;
         Metric metric_median_time;
         metric_median_time.add_values(med(local_results.times));
         response->add_metrics()->CopyFrom(metric_median_time);
@@ -1452,9 +1447,6 @@ int main(int argc, char **argv) {
   std::vector<HMInputParamBase *> InParams;
 
   int numParams = collectInputParams(InParams, test_name);
-  for (auto param : InParams) {
-    std::cout << "Param: " << *param << "\n";
-  }
 
   const int max_buffer = 1000;
   char buffer[max_buffer];
