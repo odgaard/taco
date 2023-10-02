@@ -250,8 +250,12 @@ public:
 
 // HyperMapper Objective object
 struct HMObjective {
-  float compute_time;
-  bool valid;
+    taco::util::TimeResults results;
+    double compute_time;
+    std::vector<double> compute_times;
+    double energy_consumption;
+    std::vector<double> energy_consumptions;
+    bool valid;
 };
 
 #endif

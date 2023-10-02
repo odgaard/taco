@@ -7,6 +7,9 @@
 #include <numeric>
 #include <vector>
 #include <cmath>
+
+#include <fstream>
+
 #include "taco/error.h"
 
 using namespace std;
@@ -18,6 +21,8 @@ struct TimeResults {
   double mean;
   double stdev;
   double median;
+  std::vector<double> times;
+  std::vector<double> energy_consumptions;
   int size;
 
   friend std::ostream& operator<<(std::ostream& os, const TimeResults& t) {
@@ -32,6 +37,8 @@ struct TimeResults {
   }
 };
 
+
+
 typedef std::chrono::time_point<std::chrono::steady_clock> TimePoint;
 
 /// Monotonic timer that can be called multiple times and that computes
@@ -44,13 +51,48 @@ public:
     if(dummyB){ free(dummyB); }
   }
   void start() {
+    energy_begin = get_energy_consumed(rapl_dir);
     begin = std::chrono::steady_clock::now();
   }
 
   void stop() {
     auto end = std::chrono::steady_clock::now();
+    auto energy_end = get_energy_consumed(rapl_dir);
+
     auto diff = std::chrono::duration<double, std::milli>(end - begin).count();
     times.push_back(diff);
+    
+    auto energy_diff = energy_end - energy_begin;
+    energy_consumptions.push_back(energy_diff);
+  }
+
+  // Function to read energy consumed
+  double get_energy_consumed(const std::string& rapl_dir) {
+      std::string energy_file_path = rapl_dir + "/energy_uj";
+      std::ifstream energy_file(energy_file_path);
+      if (!energy_file.is_open()) {
+          throw std::runtime_error("Failed to open file: " + energy_file_path);
+      }
+      long long energy_uj;
+      energy_file >> energy_uj;
+      if (!energy_file.good()) {
+          throw std::runtime_error("Failed to read from file: " + energy_file_path);
+      }
+      return static_cast<double>(energy_uj) * 1e-6;  // Convert micro-joules to joules
+  }
+
+  double med(vector<double> vec) {
+      typedef vector<int>::size_type vec_sz;
+
+      vec_sz size = vec.size();
+      if (size == 0)
+          throw domain_error("median of an empty vector");
+
+      sort(vec.begin(), vec.end());
+
+      vec_sz mid = size/2;
+
+      return size % 2 == 0 ? (vec[mid] + vec[mid-1]) / 2 : vec[mid];
   }
 
   // Compute mean, standard deviation and median
@@ -58,26 +100,31 @@ public:
     int repeat = static_cast<int>(times.size());
 
     TimeResults result;
-    double mean=0.0;
+    result.times = times;
+    result.energy_consumptions = energy_consumptions;
+  
     // times = ends - begins
-    sort(times.begin(), times.end());
+    std::vector<double> sorted_times = times;
+    std::sort(sorted_times.begin(), sorted_times.end());
+
     // remove 10% worst and best cases
     const int truncate = static_cast<int>(repeat * 0.1);
-    mean = accumulate(times.begin() + truncate, times.end() - truncate, 0.0);
+    double mean = std::accumulate(sorted_times.begin() + truncate,
+                                  sorted_times.end() - truncate, 0.0);
     int size = repeat - 2 * truncate;
     result.size = size;
-    mean = mean/size;
+    mean /= size;
     result.mean = mean;
 
-    vector<double> diff(size);
-    transform(times.begin() + truncate, times.end() - truncate,
-              diff.begin(), [mean](double x) { return x - mean; });
-    double sq_sum = inner_product(diff.begin(), diff.end(),
-                                  diff.begin(), 0.0);
+    std::vector<double> diff(size);
+    std::transform(sorted_times.begin() + truncate, sorted_times.end() - truncate,
+                   diff.begin(), [mean](double x) { return x - mean; });
+    double sq_sum = std::inner_product(diff.begin(), diff.end(),
+                                       diff.begin(), 0.0);
     result.stdev = std::sqrt(sq_sum / size);
     result.median = (size % 2)
-                    ? times[size/2]
-                    : (times[size/2-1] + times[size/2]) / 2;
+                    ? sorted_times[size/2]
+                    : (sorted_times[size/2-1] + sorted_times[size/2]) / 2;
     return result;
   }
 
@@ -99,8 +146,11 @@ public:
 
 protected:
   vector<double> times;
+  vector<double> energy_consumptions;
   TimePoint begin;
+  double energy_begin;
 private:
+  std::string rapl_dir = "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0";
   int dummySize = 3000000;
   double* dummyA = NULL;
   double* dummyB = NULL;

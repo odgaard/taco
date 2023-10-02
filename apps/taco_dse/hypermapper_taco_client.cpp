@@ -60,7 +60,11 @@ using json = nlohmann::json;
 namespace fs = std::experimental::filesystem;
 int WARP_SIZE = 32;
 float default_config_time = 0.0f;
-float no_sched_time = 0.0f;
+taco::util::TimeResults no_sched_results;
+double no_sched_time = 0.0f;
+std::vector<double> no_sched_times;
+double no_sched_energy = 0.0f;
+std::vector<double> no_sched_energies;
 int num_loops = 0;
 float sparsity = 0.0f;
 int num_i = 0;
@@ -247,10 +251,37 @@ public:
         }
         
         // Create a mocked response:
-        std::cout << obj.compute_time << std::endl;
-        Metric metric;
-        metric.add_values(obj.compute_time); // Mocked value
-        response->add_metrics()->CopyFrom(metric);
+        taco::util::TimeResults local_results = obj.results;
+        std::cout << "Obj results:" << std::endl;
+        std::cout << local_results.median << std::endl;
+        std::cout << med(local_results.energy_consumptions) << std::endl;
+        for (double value : local_results.times) {
+            std::cout << value << " ";
+        }
+        std::cout << "\n";
+        for (double value : local_results.energy_consumptions) {
+            std::cout << value << " ";
+        }
+        std::cout << "\n";
+        Metric metric_median_time;
+        metric_median_time.add_values(med(local_results.times));
+        response->add_metrics()->CopyFrom(metric_median_time);
+        Metric metric_compute_times;
+        for (double time : local_results.times) {
+            metric_compute_times.mutable_values()->Add(time);
+        }
+        response->add_metrics()->CopyFrom(metric_compute_times);
+
+
+        //Metric metric_median_energy;
+        //metric_median_energy.add_values(med(local_results.energy_consumptions));
+        //response->add_metrics()->CopyFrom(metric_median_energy);
+        Metric metric_energy_consumptions;
+        for (double energy_consumption : local_results.energy_consumptions) {
+            metric_energy_consumptions.mutable_values()->Add(energy_consumption);
+        }
+        response->add_metrics()->CopyFrom(metric_energy_consumptions);
+
 
         // Get current time in milliseconds since the epoch
         auto now = std::chrono::system_clock::now();
@@ -355,7 +386,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
   // set the dynamic features
   HMScenario["optimization_objectives"] = json(Objectives);
   HMScenario["run_directory"] = CurrentDir;
-  HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + "_" + count + ".log";
+  //HMScenario["log_file"] = OutputFoldername + "/log_" + AppName + "_" + count + ".log";
   if(optimization != "random_sampling" && optimization != "embedding_random_sampling") {
     HMScenario["optimization_method"] = optimization;
     HMScenario["optimization_iterations"] = NumIterations;
@@ -403,7 +434,19 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1}));
   InParams.push_back(new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal, {0, 1, 2, 4, 8, 16, 32, 64, 128}));
-  InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64}));
+  InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal,[]
+    {
+      std::vector<int> values;
+      for(int i = 1; i <= 64; ++i) {
+          if(i % 2 == 0 || i == 1) {
+              values.push_back(i);
+          }
+      }
+      return values;
+    }()  // The () at the end causes the lambda to be called immediately
+  ));
+
+    //InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64}));
 
   int reorder_size = 5;
   InParams.push_back(new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation, {std::vector<int>{reorder_size}}));
@@ -620,13 +663,17 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     num_j = spmm_handler->get_num_j();
     op = "SpMM";
 
-    compute_times = vector<double>();
+    taco::util::Timer local_timer;
     for(int i = 0; i < 5; i++) {
-      double timer = 0.0;
-      timer = spmm_handler->compute_unscheduled();
-      compute_times.push_back(timer);
+        local_timer = spmm_handler->compute_unscheduled(local_timer);
     }
-    no_sched_time = median(compute_times);
+
+    auto result = local_timer.getResult();
+    no_sched_results = result;
+    no_sched_time = result.median;
+    no_sched_times = result.times;
+    no_sched_energy = median(result.energy_consumptions);
+    no_sched_energies = result.energy_consumptions;
     no_sched_init = true;
   }
 
@@ -658,8 +705,21 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     spmm_handler->set_cold_run();
   }
 
-  double compute_time = no_sched_init ? no_sched_time : spmm_handler->get_compute_time();
-  Obj.compute_time = compute_time;
+  if (no_sched_init) {
+      Obj.results = no_sched_results;
+      //Obj.compute_time = no_sched_time;
+      //Obj.compute_times = no_sched_times;
+      //Obj.energy_consumption = no_sched_energy;
+      //Obj.energy_consumptions = no_sched_energies;
+  } else {
+      taco::util::TimeResults local_results = spmm_handler->get_results();
+      Obj.results = local_results;
+      //Obj.compute_time = local_results.median;
+      //Obj.compute_times = local_results.times;
+      //Obj.energy_consumption = median(local_results.energy_consumptions);
+      //Obj.energy_consumptions = local_results.energy_consumptions;
+  }
+
 
   return Obj;
 }
@@ -1188,11 +1248,7 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
   using namespace taco;
 
   std::vector<int> default_ordering{0,1,2,3,4};
-  // int NUM_I = 67173;
-  // int NUM_J = 67173;
   int NUM_K = 256;
-  // float _sparsity = .982356;
-  std::vector<double> compute_times;
 
   if(!initialized) {
     cout << "INITIALIZING" << endl;
@@ -1200,7 +1256,6 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
     spmm_handler->matrix_name = matrix_name;
     spmm_handler->NUM_K = NUM_K;
     spmm_handler->initialize_data(1);
-    // result = spmm_handler->get_A();
     taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
     initialized = true;
     sparsity = spmm_handler->get_sparsity();
@@ -1208,16 +1263,14 @@ int single_run_spmm(std::string matrix_name, int chunk_size, int unroll_factor, 
     op = "SpMM";
   }
 
-
-  compute_times = std::vector<double>();
   spmm_handler->set_cold_run();
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
+  taco::util::Timer local_timer;
   for(int i = 0; i < 5; i++) {
-    double timer = spmm_handler->compute_unscheduled();
-    compute_times.push_back(timer);
+    local_timer = spmm_handler->compute_unscheduled(local_timer);
    }
 
-  double compute_time = median(compute_times);
+  double compute_time = local_timer.getResult().median;
 
   std::cout << "Compute time: " << compute_time << std::endl;
   return 0;

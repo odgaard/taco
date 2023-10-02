@@ -39,6 +39,16 @@ const taco::IndexVar i("i"), j("j"), k("k"), l("l"), m("m"), n("n");
 using namespace std;
 namespace fs = std::experimental::filesystem;
 
+#include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cmath>
+#include <vector>
+#include <fstream>
+#include <string>
+#include <stdexcept>
+#include <omp.h>  // Include OpenMP header
+
 double med(vector<double> vec) {
     typedef vector<int>::size_type vec_sz;
 
@@ -168,7 +178,15 @@ UfuncInputCache inputCache;
 class tacoOp {
 public:
     double compute_time;
+    std::vector<double> compute_times;
     double default_compute_time;
+    std::vector<double> default_compute_times;
+    double energy_consumption;
+    std::vector<double> energy_consumptions;
+    double default_energy_consumption;
+    std::vector<double> default_energy_consumptions;
+    taco::util::TimeResults global_default_results;
+    taco::util::TimeResults global_results;
     std::string matrix_name;
     LoopReordering<taco::IndexVar>* reorderings;
     tacoOp() : compute_time{0.0}, default_compute_time{0.0} {}
@@ -176,6 +194,7 @@ public:
     virtual void initialize_data(int mode=RANDOM) = 0;
     virtual void compute(bool default_config=false) = 0;
     double get_compute_time() { return compute_time; }
+    taco::util::TimeResults get_results() { return global_results; }
     double get_default_compute_time() { return default_compute_time; }
     void compute_reordering(std::vector<taco::IndexVar>& ordering) {
         // TODO: Figure out how to reuse the same ordering addresses
@@ -409,13 +428,13 @@ public:
     double compute_unscheduled() {
         taco::Tensor<double> result({NUM_I}, taco::dense);
         result(i) = B(i, j) * c(j);
-        taco::util::Timer timer;
+        taco::util::Timer local_timer;
         result.compile();
         result.assemble();
-        timer.start();
+        local_timer.start();
         result.compute();
-        timer.stop();
-        return timer.getResult().mean;
+        local_timer.stop();
+        return local_timer.getResult().mean;
     }
 
     void set_cold_run() { cold_run = true; }
@@ -708,30 +727,34 @@ public:
 
 
         taco::util::Timer timer;
-
-        std::vector<double> compute_times;
-
         timer.clear_cache();
         result.compile(sched);
         result.setNeedsAssemble(true);
         result.assemble();
+        
+        taco::util::TimeResults time_result;
         for(int i = 0; i < num_reps; i++) {
             timer.start();
             result.setNeedsCompute(true);
             result.compute();
             timer.stop();
 
-            double temp_compute_time = timer.getResult().mean;
+            time_result = timer.getResult();
 
-            compute_times.push_back(temp_compute_time);
-            if(temp_compute_time > 10000) {
+            if(time_result.mean > 10000) {
                 break;
             }
         }
-        compute_time = med(compute_times);
+        global_results = time_result;
+        compute_time = time_result.median;
+        compute_times = time_result.times;
+        energy_consumptions = time_result.energy_consumptions;
 
         if(default_config) {
-            default_compute_time = timer.getResult().mean;
+            global_default_results = time_result;
+            default_compute_time = time_result.median;
+            default_compute_times = time_result.times;
+            default_energy_consumptions = time_result.energy_consumptions;
         }
         timer.clear_cache();
     }
@@ -752,25 +775,31 @@ public:
         timer.start();
         A.compute();
         timer.stop();
+        auto time_result = timer.getResult();
+        global_results = time_result;
+        compute_time = time_result.median;
+        compute_times = time_result.times;
+        energy_consumptions = time_result.energy_consumptions;
 
-        compute_time = timer.getResult().mean;
-        if (default_config)
-        {
-            default_compute_time = timer.getResult().mean;
+        if(default_config) {
+            global_default_results = time_result;
+            default_compute_time = time_result.median;
+            default_compute_times = time_result.times;
+            default_energy_consumptions = time_result.energy_consumptions;
         }
         timer.clear_cache();
     }
 
-    double compute_unscheduled() {
+    taco::util::Timer compute_unscheduled(taco::util::Timer &arg_timer) {
         taco::Tensor<double> result({NUM_I, NUM_K}, taco::dense);
         result(i, k) = B(i, j) * C(j, k);
-        taco::util::Timer timer;
+        //taco::util::Timer local_timer;
         result.compile();
         result.assemble();
-        timer.start();
+        arg_timer.start();
         result.compute();
-        timer.stop();
-        return timer.getResult().mean;
+        arg_timer.stop();
+        return arg_timer;
     }
 
     void compute(taco::Tensor<double> &result, bool default_config = false)
@@ -787,10 +816,17 @@ public:
         timer.start();
         result.compute();
         timer.stop();
-        compute_time = timer.getResult().mean;
-        if (default_config)
-        {
-            default_compute_time = timer.getResult().mean;
+        auto time_result = timer.getResult();
+        global_results = time_result;
+        compute_time = time_result.median;
+        compute_times = time_result.times;
+        energy_consumptions = time_result.energy_consumptions;
+
+        if(default_config) {
+            global_default_results = time_result;
+            default_compute_time = time_result.median;
+            default_compute_times = time_result.times;
+            default_energy_consumptions = time_result.energy_consumptions;
         }
         timer.clear_cache();
     }
