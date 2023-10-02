@@ -55,14 +55,31 @@ public:
     begin = std::chrono::steady_clock::now();
   }
 
+  double get_max_energy_range(const std::string& rapl_dir) {
+      std::string energy_file_path = rapl_dir + "/energy_uj";
+      std::ifstream energy_file(energy_file_path);
+      if (!energy_file.is_open()) {
+          throw std::runtime_error("Failed to open file: " + energy_file_path);
+      }
+      long long max_energy_uj;
+      energy_file >> max_energy_uj;
+      if (!energy_file.good()) {
+          throw std::runtime_error("Failed to read from file: " + energy_file_path);
+      }
+      return static_cast<double>(max_energy_uj) * 1e-6;  // Convert micro-joules to joules
+  }
+
   void stop() {
     auto end = std::chrono::steady_clock::now();
     auto energy_end = get_energy_consumed(rapl_dir);
 
     auto diff = std::chrono::duration<double, std::milli>(end - begin).count();
     times.push_back(diff);
-    
-    auto energy_diff = energy_end - energy_begin;
+
+    const double MAX_ENERGY = get_max_energy_range(rapl_dir);  // replace with actual maximum value
+    auto energy_diff = (energy_end < energy_begin) ?
+            (MAX_ENERGY - energy_begin + energy_end) :
+            (energy_end - energy_begin);
     energy_consumptions.push_back(energy_diff);
   }
 
