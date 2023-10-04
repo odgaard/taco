@@ -456,8 +456,8 @@ int collectInputParamsSpMV(std::vector<HMInputParamBase *> &InParams, int SPLIT 
   return InParams.size();
 }
 int collectInputParamsSpMM(std::vector<HMInputParamBase *> &InParams) {
-  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
-  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}));
+  InParams.push_back(new HMInputParam<int>("chunk_size", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64, 128, 256}));
+  InParams.push_back(new HMInputParam<int>("unroll_factor", ParamType::Ordinal, {1, 2, 4, 8}));
   addCommonParams(InParams);
   return InParams.size();
 }
