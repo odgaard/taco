@@ -56,7 +56,7 @@ public:
   }
 
   double get_max_energy_range(const std::string& rapl_dir) {
-      std::string energy_file_path = rapl_dir + "/energy_uj";
+      std::string energy_file_path = rapl_dir + "/max_energy_range_uj";
       std::ifstream energy_file(energy_file_path);
       if (!energy_file.is_open()) {
           throw std::runtime_error("Failed to open file: " + energy_file_path);
@@ -76,10 +76,14 @@ public:
     auto diff = std::chrono::duration<double, std::milli>(end - begin).count();
     times.push_back(diff);
 
-    const double MAX_ENERGY = get_max_energy_range(rapl_dir);  // replace with actual maximum value
-    auto energy_diff = (energy_end < energy_begin) ?
-            (MAX_ENERGY - energy_begin + energy_end) :
-            (energy_end - energy_begin);
+    auto energy_diff = energy_end - energy_begin;
+
+    // Adjust for potential wraparound
+    const double MAX_ENERGY = get_max_energy_range(rapl_dir);
+    if (energy_diff < 0) {
+        energy_diff += MAX_ENERGY;
+    }
+
     energy_consumptions.push_back(energy_diff);
   }
 
