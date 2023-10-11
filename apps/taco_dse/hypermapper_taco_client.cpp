@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <thread>
 
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
@@ -245,21 +246,32 @@ public:
         //printHMInputParamBaseVector(m_InParams);
 
         HMObjective obj;
-        try {
-            obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
-        } catch (const std::exception& e) {
-            m_logger << "Exception caught: " << e.what() << std::endl;
-            return Status(StatusCode::INTERNAL, e.what());
-        } catch (...) {
-            m_logger << "Unknown exception caught" << std::endl;
-            return Status(StatusCode::INTERNAL, "Unknown error");
+        std::vector<double> temp_meds;
+        double temp_med;
+        for (int i = 0; i < 11; i++) {
+          try {
+              obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
+              temp_med = med(obj.results.times);
+              temp_meds.push_back(temp_med);
+          } catch (const std::exception& e) {
+              m_logger << "Exception caught: " << e.what() << std::endl;
+              return Status(StatusCode::INTERNAL, e.what());
+          } catch (...) {
+              m_logger << "Unknown exception caught" << std::endl;
+              return Status(StatusCode::INTERNAL, "Unknown error");
+          }
+          std::cout << temp_med << std::endl;
+          std::this_thread::sleep_for(std::chrono::seconds(2));
         }
+
+        double new_med = med(temp_meds);
         
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
         std::cout << "[" << hostname << "]: " << local_results.median << ", " << med(local_results.energy_consumptions) << std::endl;
         Metric metric_median_time;
-        metric_median_time.add_values(med(local_results.times));
+        metric_median_time.add_values(new_med);
+        //metric_median_time.add_values(med(local_results.times));
         response->add_metrics()->CopyFrom(metric_median_time);
         Metric metric_compute_times;
         for (double time : local_results.times) {
@@ -290,6 +302,8 @@ public:
         Feasible feasible;
         feasible.set_value(true); // Mocked feasibility value
         response->mutable_feasible()->CopyFrom(feasible);
+
+        std::this_thread::sleep_for(std::chrono::seconds(10));
 
         return Status::OK;
     }
@@ -639,6 +653,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   // int NUM_I = 67173;
   // int NUM_J = 67173;
   int NUM_K = 256;
+  int ITERATIONS = 5; // Was 10
   // float _sparsity = .982356;
   std::vector<double> compute_times;
 
@@ -687,7 +702,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     int temp_omp_chunk_size = 1;
     int temp_omp_num_threads = 32;
 
-    spmm_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_unroll_factor, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 10);
+    spmm_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_unroll_factor, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, ITERATIONS);
     spmm_handler->set_cold_run();
 
     default_config_time = spmm_handler->get_compute_time();
@@ -696,7 +711,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   }
 
   if(!no_sched_init) {
-    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 10);
+    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, ITERATIONS);
     spmm_handler->set_cold_run();
   }
 
