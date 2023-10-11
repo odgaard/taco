@@ -600,12 +600,17 @@ public:
         else if(omp_scheduling_type == 1) {
             taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
         }
-        return stmt.split(i, i0, i1, chunk_size)
-                .pos(j, jpos, B(i,j))
-                .split(jpos, jpos0, jpos1, unroll_factor)
-                .reorder(reorder)
+        IndexStmt return_stmt = stmt;
+        return_stmt = return_stmt
+                .split(i, i0, i1, chunk_size)
+                .pos(j, jpos, B(i,j));
+        if (unroll_factor > 1) {
+            return_stmt = return_stmt.split(jpos, jpos0, jpos1, unroll_factor);
+        }
+        return_stmt = return_stmt.reorder(reorder)
                 .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces)
                 .parallelize(k, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
+        return return_stmt;
     }
 
     taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=1, int num_threads=32) {
