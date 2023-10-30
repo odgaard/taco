@@ -189,6 +189,59 @@ void printHMInputParamBaseVector(const std::vector<HMInputParamBase*>& vec) {
     std::cout << std::endl;
 }
 
+using Matrix = std::vector<std::vector<double>>;
+
+Matrix generateRandomMatrix(int rows, int cols) {
+    Matrix mat(rows, std::vector<double>(cols, 0.0));
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            mat[i][j] = rand() % 10;
+        }
+    }
+    return mat;
+}
+
+void gemm_mock(const Matrix& A, Matrix& B, Matrix& C) {
+    int m = A.size();
+    int n = B[0].size();
+    int k = A[0].size();
+
+    if (B.size() != k || C.size() != m || C[0].size() != n) {
+        std::cerr << "Does not match" << std::endl;
+        return;
+    }
+
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            double sum = 0.0;
+            for (int p = 0; p < k; p++) {
+                sum += A[i][p] * B[p][j];
+            }
+            C[i][j] = sum;
+        }
+    }
+}
+
+HMObjective mock_function() {
+    int m = 500;
+    int n = 500;
+    int k = 500;
+    taco::util::Timer timer;
+    for (int i = 0; i < 5; i++) {
+        timer.start();
+        Matrix A = generateRandomMatrix(m, k);
+        Matrix B = generateRandomMatrix(k, n);
+        Matrix C(m, std::vector<double>(n, 0.0));
+
+        gemm_mock(A, B, C);
+        timer.stop();
+    }
+    auto time_result = timer.getResult();
+    HMObjective obj;
+    obj.results = time_result;
+    return obj;
+}
+
 class ConfigurationServiceImpl final : public ConfigurationService::Service {
 private:
     std::vector<HMInputParamBase *>& m_InParams;
@@ -248,8 +301,10 @@ public:
         HMObjective obj;
         std::vector<double> temp_meds;
         double temp_med;
-        for (int i = 0; i < 11; i++) {
+        //for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 5; i++) {
           try {
+              //obj = mock_function();
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
               temp_med = med(obj.results.times);
               temp_meds.push_back(temp_med);
@@ -261,11 +316,15 @@ public:
               return Status(StatusCode::INTERNAL, "Unknown error");
           }
           std::cout << temp_med << std::endl;
-          std::this_thread::sleep_for(std::chrono::seconds(2));
+          //std::this_thread::sleep_for(std::chrono::seconds(5));
         }
+        //std::this_thread::sleep_for(std::chrono::seconds(14));
+        //}
+        //std::this_thread::sleep_for(std::chrono::seconds(10));
 
-        double new_med = med(temp_meds);
-        
+        auto min_iter = std::min_element(temp_meds.begin(), temp_meds.end());//double new_med = med(temp_meds);
+        double new_med = *min_iter;
+      
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
         std::cout << "[" << hostname << "]: " << local_results.median << ", " << med(local_results.energy_consumptions) << std::endl;
@@ -653,7 +712,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   // int NUM_I = 67173;
   // int NUM_J = 67173;
   int NUM_K = 256;
-  int ITERATIONS = 5; // Was 10
+  int ITERATIONS = 1; // Was 10
   // float _sparsity = .982356;
   std::vector<double> compute_times;
 
@@ -674,7 +733,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     op = "SpMM";
 
     taco::util::Timer local_timer;
-    for(int i = 0; i < 5; i++) {
+    for(int i = 0; i < 5; i++) { // I used to be equal to 5
         local_timer = spmm_handler->compute_unscheduled(local_timer);
     }
 

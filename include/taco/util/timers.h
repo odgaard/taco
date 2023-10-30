@@ -155,7 +155,7 @@ public:
       dummyA = (double*)(malloc(dummySize*sizeof(double)));
       dummyB = (double*)(malloc(dummySize*sizeof(double)));
     }
-    for (int i=0; i< 100; i++) {
+    for (int i=0; i< 1000; i++) {
       dummyA[rand() % dummySize] = rand()/RAND_MAX;
       dummyB[rand() % dummySize] = rand()/RAND_MAX;
     }
@@ -172,7 +172,7 @@ protected:
   double energy_begin;
 private:
   std::string rapl_dir = "/sys/devices/virtual/powercap/intel-rapl/intel-rapl:0";
-  int dummySize = 3000000;
+  int dummySize = 20000000;
   double* dummyA = NULL;
   double* dummyB = NULL;
 };

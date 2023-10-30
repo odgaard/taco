@@ -191,6 +191,7 @@ int Module::callFuncPackedRaw(std::string name, void** args) {
   omp_sched_t existingSched;
   ParallelSchedule tacoSched;
   int existingChunkSize, tacoChunkSize;
+  setenv("OMP_PROC_BIND", "close", 1);
   int existingNumThreads = omp_get_max_threads();
   omp_get_schedule(&existingSched, &existingChunkSize);
   taco_get_parallel_schedule(&tacoSched, &tacoChunkSize);

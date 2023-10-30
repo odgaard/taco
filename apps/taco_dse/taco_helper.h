@@ -749,6 +749,7 @@ public:
             if(time_result.mean > 10000) {
                 break;
             }
+            timer.clear_cache();
         }
         global_results = time_result;
         compute_time = time_result.median;
