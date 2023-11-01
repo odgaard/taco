@@ -419,22 +419,31 @@ public:
         a.compute();
         timer.stop();
 
-        compute_time = timer.getResult().mean;
+        auto time_result = timer.getResult();
+
+        global_results = time_result;
+        compute_time = time_result.median;
+        compute_times = time_result.times;
+        energy_consumptions = time_result.energy_consumptions;
+
         if(default_config) {
-            default_compute_time = timer.getResult().mean;
+            global_default_results = time_result;
+            default_compute_time = time_result.median;
+            default_compute_times = time_result.times;
+            default_energy_consumptions = time_result.energy_consumptions;
         }
     }
 
-    double compute_unscheduled() {
+    taco::util::Timer compute_unscheduled(taco::util::Timer &arg_timer) {
         taco::Tensor<double> result({NUM_I}, taco::dense);
         result(i) = B(i, j) * c(j);
-        taco::util::Timer local_timer;
+        //taco::util::Timer local_timer;
         result.compile();
         result.assemble();
-        local_timer.start();
+        arg_timer.start();
         result.compute();
-        local_timer.stop();
-        return local_timer.getResult().mean;
+        arg_timer.stop();
+        return arg_timer;
     }
 
     void set_cold_run() { cold_run = true; }
@@ -462,6 +471,8 @@ public:
         timer.clear_cache();
         result.compile(sched);
         result.setNeedsAssemble(true);
+        taco::util::TimeResults time_result;
+
         for(int i = 0; i < num_reps; i++) {
             result.setNeedsCompute(true);
             result.assemble();
@@ -469,17 +480,23 @@ public:
             result.compute();
             timer.stop();
 
-            double temp_compute_time = timer.getResult().mean;
+            time_result = timer.getResult();
 
-            compute_times.push_back(temp_compute_time);
-            if(temp_compute_time > 1000) {
+            if(time_result.mean > 1000) {
                 break;
             }
         }
-        compute_time = med(compute_times);
+
+        global_results = time_result;
+        compute_time = time_result.median;
+        compute_times = time_result.times;
+        energy_consumptions = time_result.energy_consumptions;
 
         if(default_config) {
-            default_compute_time = timer.getResult().mean;
+            global_default_results = time_result;
+            default_compute_time = time_result.median;
+            default_compute_times = time_result.times;
+            default_energy_consumptions = time_result.energy_consumptions;
         }
         timer.clear_cache();
     }

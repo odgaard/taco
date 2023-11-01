@@ -316,14 +316,15 @@ public:
               return Status(StatusCode::INTERNAL, "Unknown error");
           }
           std::cout << temp_med << std::endl;
-          //std::this_thread::sleep_for(std::chrono::seconds(5));
+          std::this_thread::sleep_for(std::chrono::seconds(15));
         }
         //std::this_thread::sleep_for(std::chrono::seconds(14));
         //}
         //std::this_thread::sleep_for(std::chrono::seconds(10));
 
-        auto min_iter = std::min_element(temp_meds.begin(), temp_meds.end());//double new_med = med(temp_meds);
-        double new_med = *min_iter;
+        //auto min_iter = std::min_element(temp_meds.begin(), temp_meds.end());
+        double new_med = med(temp_meds);
+        //double new_med = *min_iter;
       
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
@@ -687,7 +688,7 @@ double median(vector<double> vec) {
 
         vec_sz size = vec.size();
         if (size == 0)
-                throw domain_error("median of an empty vector");
+            throw domain_error("median of an empty vector");
 
         sort(vec.begin(), vec.end());
 
@@ -776,17 +777,9 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
 
   if (no_sched_init) {
       Obj.results = no_sched_results;
-      //Obj.compute_time = no_sched_time;
-      //Obj.compute_times = no_sched_times;
-      //Obj.energy_consumption = no_sched_energy;
-      //Obj.energy_consumptions = no_sched_energies;
   } else {
       taco::util::TimeResults local_results = spmm_handler->get_results();
       Obj.results = local_results;
-      //Obj.compute_time = local_results.median;
-      //Obj.compute_times = local_results.times;
-      //Obj.energy_consumption = median(local_results.energy_consumptions);
-      //Obj.energy_consumptions = local_results.energy_consumptions;
   }
 
 
@@ -825,13 +818,17 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     num_j = spmv_handler->get_num_j();
     op = "SpMV";
 
-    compute_times = vector<double>();
-    for(int i = 0; i < 5; i++) {
-      double timer = 0.0;
-      timer = spmv_handler->compute_unscheduled();
-      compute_times.push_back(timer);
+    taco::util::Timer local_timer;
+    for(int i = 0; i < 5; i++) { // I used to be equal to 5
+        local_timer = spmv_handler->compute_unscheduled(local_timer);
     }
-    no_sched_time = median(compute_times);
+
+    auto result = local_timer.getResult();
+    no_sched_results = result;
+    no_sched_time = result.median;
+    no_sched_times = result.times;
+    no_sched_energy = median(result.energy_consumptions);
+    no_sched_energies = result.energy_consumptions;
     no_sched_init = true;
   }
 
@@ -847,7 +844,8 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     int temp_omp_chunk_size = 1;
     int temp_omp_num_threads = 32;
 
-    spmv_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_chunk_size2, temp_chunk_size3, temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 10);
+    spmv_handler->schedule_and_compute(temp_result, temp_chunk_size, temp_chunk_size2, temp_chunk_size3, 
+    temp_loop_ordering, temp_omp_scheduling_type, temp_omp_chunk_size, temp_omp_num_threads, false, 10);
     spmv_handler->set_cold_run();
 
     default_config_time = spmv_handler->get_compute_time();
@@ -867,9 +865,12 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   }
   Obj.valid = valid;
 
-  double compute_time = no_sched_init ? no_sched_time : spmv_handler->get_compute_time();
-  Obj.compute_time = compute_time;
-
+  if (no_sched_init) {
+      Obj.results = no_sched_results;
+  } else {
+      taco::util::TimeResults local_results = spmv_handler->get_results();
+      Obj.results = local_results;
+  }
   return Obj;
 }
 
