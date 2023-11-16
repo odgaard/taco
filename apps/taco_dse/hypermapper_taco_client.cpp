@@ -302,7 +302,7 @@ public:
         std::vector<double> temp_meds;
         double temp_med;
         //for (int j = 0; j < 3; j++) {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 3; i++) {
           try {
               //obj = mock_function();
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
@@ -316,7 +316,7 @@ public:
               return Status(StatusCode::INTERNAL, "Unknown error");
           }
           std::cout << temp_med << std::endl;
-          std::this_thread::sleep_for(std::chrono::seconds(15));
+          //std::this_thread::sleep_for(std::chrono::seconds(15));
         }
         //std::this_thread::sleep_for(std::chrono::seconds(14));
         //}
@@ -713,7 +713,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   // int NUM_I = 67173;
   // int NUM_J = 67173;
   int NUM_K = 256;
-  int ITERATIONS = 1; // Was 10
+  int ITERATIONS = 10; // Was 10
   // float _sparsity = .982356;
   std::vector<double> compute_times;
 
