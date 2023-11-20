@@ -9,33 +9,11 @@
 
 template <class T> class HMInputParam;
 void fatalError(const std::string &msg);
+//std::ostream &operator<<(std::ostream &out, const ParamType &PT);
 
 // Enum for HyperMapper parameter types
 enum ParamType { Real, Integer, Ordinal, Categorical, Permutation };
 enum DataType { Int, Float, IntVector };
-
-std::string getTypeAsString(const ParamType &PT) {
-  static const std::map<ParamType, std::string> typeStrings = {
-    {Real, "real"},
-    {Integer, "integer"},
-    {Ordinal, "ordinal"},
-    {Categorical, "categorical"},
-    {Permutation, "permutation"}
-  };
-  return typeStrings.at(PT);
-}
-
-std::ostream &operator<<(std::ostream &out, const ParamType &PT) {
-  static const std::map<ParamType, std::string> typeStrings = {
-    {Real, "Real"},
-    {Integer, "Integer"},
-    {Ordinal, "Ordinal"},
-    {Categorical, "Categorical"},
-    {Permutation, "Permutation"}
-  };
-  out << typeStrings.at(PT);
-  return out;
-}
 
 class HMInputParamBase {
 private:
@@ -69,24 +47,6 @@ public:
 
   bool operator==(const HMInputParamBase &IP) {
     return Key == IP.getKey();
-  }
-
-  void print () {
-    std::cout << getKey() << ":";
-    std::cout << "\n  Name: " << getName();
-    std::cout << "\n  Type: " << getType();
-    print(std::cout);
-  }
-
-  virtual void print(std::ostream &out) const {}
-
-  friend std::ostream &operator<<(std::ostream &out,
-                                  const HMInputParamBase &IP) {
-    out << IP.getKey() << ":";
-    out << "\n  Name: " << IP.getName();
-    out << "\n  Type: " << IP.getType();
-    IP.print(out);
-    return out;
   }
 };
 

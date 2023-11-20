@@ -49,6 +49,9 @@ namespace fs = std::experimental::filesystem;
 #include <stdexcept>
 #include <omp.h>  // Include OpenMP header
 
+
+double med(vector<double> vec);
+
 double med(vector<double> vec) {
     typedef vector<int>::size_type vec_sz;
 
@@ -213,8 +216,6 @@ public:
         std::vector<taco::IndexVar> temp(reorderings->get_reordering(index));
         return temp;
     }
-    std::vector<taco::IndexVar> get_reordering(std::vector<int> reordering) {
-    }
     void get_reordering(std::vector<taco::IndexVar>& reordering_out, std::vector<int> reordering) {
         (reorderings->get_reordering(reordering_out, reordering));
     }
@@ -246,10 +247,11 @@ public:
                                                                       c("c", {NUM_J}, taco::Format{taco::ModeFormat::Dense}),
                                                                       a("a", {NUM_I}, taco::Format{taco::ModeFormat::Dense}),
                                                                       i0("i0"), i1("i1"), i10("i10"), i11("i11"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
-    SpMV() : run_mode(1), initialized{false},
-             reorder_initialized{false},
-             cold_run{true},
-             i0("i0"), i1("i1"), i10("i10"), i11("i11"), j0("j0"), j1("j1"), kpos("kpos"), kpos0("kpos0"), kpos1("kpos1") {}
+    SpMV() : initialized{false}, reorder_initialized{false}, cold_run{true},
+             i0("i0"), i1("i1"), i10("i10"), i11("i11"), 
+             kpos("kpos"), kpos0("kpos0"), kpos1("kpos1"), 
+             j0("j0"), j1("j1"), run_mode(1) {}
+
     void initialize_data(int mode = RANDOM) override
     {
         using namespace taco;
@@ -342,22 +344,6 @@ public:
             .parallelize(j1, ParallelUnit::CPUVector, OutputRaceStrategy::IgnoreRaces);
     }
 
-    taco::IndexStmt schedule_(std::vector<int> order, int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8) {
-        using namespace taco;
-        if(SPLIT) {
-            std::vector<taco::IndexVar> reorder = get_reordering(order);
-            return stmt.split(i, i0, i1, CHUNK_SIZE)
-            .split(i1, i10, i11, CHUNK_SIZE2)
-            .reorder(reorder)
-            .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-        }
-        std::vector<taco::IndexVar> reorder;
-        reorder.reserve(order.size());
-        get_reordering(reorder, order);
-        return stmt.split(i, i0, i1, CHUNK_SIZE)
-                .reorder(reorder)
-                .parallelize(i0, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
-    }
     taco::IndexStmt schedule2(int CHUNK_SIZE=16, int SPLIT=0, int CHUNK_SIZE2=8, int order=0) {
         using namespace taco;
         if(SPLIT) {
@@ -894,8 +880,9 @@ public:
                                                                                          i0("i0"), i1("i1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1"), run_mode(0)
     {
     }
-    SDDMM() : run_mode(1), initialized{false}, cold_run{true},
-              i0("i0"), i1("i1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1") {}
+    SDDMM() : initialized{false}, cold_run{true},
+              i0("i0"), i1("i1"), jpos("jpos"), jpos0("jpos0"), jpos1("jpos1"),
+              run_mode(1) {}
     void initialize_data(int mode = RANDOM) override
     {
         //TODO: Implement read from matrix market mode
@@ -1196,9 +1183,9 @@ public:
                                                                                      i0("i0"), i1("i1")
     {
     }
-    TTV() : run_mode(1), initialized{false}, cold_run{true},
-            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"), i0("i0"), i1("i1"),
-            kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"){}
+    TTV() : initialized{false}, cold_run{true},
+            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), k1("k1"), k2("k2"),
+            kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"), i0("i0"), i1("i1"), run_mode(1) {}
     float get_sparsity() { return (run_mode == 0) ? SPARSITY : inputCache.get_sparsity(); }
     void set_cold_run() { cold_run = true; }
     void initialize_data(int mode = RANDOM) override
@@ -1414,8 +1401,9 @@ public:
     taco::IndexStmt stmt;
     taco::IndexVar f, fpos, chunk, fpos2, kpos, kpos1, kpos2;
     int run_mode;
-    TTM() : run_mode(1), initialized{false}, cold_run{true},
-            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"){}
+    TTM() : initialized{false}, cold_run{true},
+            f("f"), fpos("fpos"), chunk("chunk"), fpos2("fpos2"), 
+            kpos("kpos"), kpos1("kpos1"), kpos2("kpos2"), run_mode(1) {}
     TTM(int mode, int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, int NUM_L = 1000, float SPARSITY = .1) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
                                                                                      NUM_K{NUM_K},
@@ -1620,8 +1608,8 @@ public:
     taco::IndexStmt stmt;
     taco::IndexVar i, i1, i2, k, l, m, j;
     int run_mode;
-    MTTKRP() : run_mode(1), initialized{false}, cold_run{true},
-            i("i"), i1("i1"), i2("i2"), k("k"), l("l"), m("m"), j("j"){}
+    MTTKRP() : initialized{false}, cold_run{true},
+            i("i"), i1("i1"), i2("i2"), k("k"), l("l"), m("m"), j("j"), run_mode(1) {}
     MTTKRP(int mode, int NUM_I = 1000, int NUM_J = 1000, int NUM_K = 1000, int NUM_L = 1000, int NUM_M = 1000, float SPARSITY = .1) : NUM_I{NUM_I},
                                                                                      NUM_J{NUM_J},
                                                                                      NUM_K{NUM_K},

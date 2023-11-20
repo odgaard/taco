@@ -18,12 +18,12 @@ namespace taco {
 namespace util {
 
 struct TimeResults {
-  double mean;
-  double stdev;
-  double median;
+  double mean = 0.0;
+  double stdev = 0.0;
+  double median = 0.0;
   std::vector<double> times;
   std::vector<double> energy_consumptions;
-  int size;
+  int size = 0;
 
   friend std::ostream& operator<<(std::ostream& os, const TimeResults& t) {
     if (t.size == 1) {
