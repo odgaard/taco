@@ -179,6 +179,7 @@ void* Module::getFuncPtr(std::string name) {
   return dlsym(lib_handle, name.data());
 }
 
+
 int Module::callFuncPackedRaw(std::string name, void** args) {
   typedef int (*fnptr_t)(void**);
   static_assert(sizeof(void*) == sizeof(fnptr_t),
@@ -190,21 +191,47 @@ int Module::callFuncPackedRaw(std::string name, void** args) {
 #if USE_OPENMP
   omp_sched_t existingSched;
   ParallelSchedule tacoSched;
+
   int existingChunkSize, tacoChunkSize;
-  setenv("OMP_PROC_BIND", "close", 1);
+  int tacoMonotonic;
+  
+  auto omp_proc_bind = "primary";
+  //auto omp_proc_bind = "spread";
+  //auto omp_proc_bind = "close";
+  setenv("OMP_PROC_BIND", omp_proc_bind, 1);
+  setenv("OMP_WAIT_POLICY", "active", 1); 
+  //setenv("OMP_PLACES", omp_places, 1);
+  //taco_tassert(omp_get_proc_bind() == 2) <<
+  //    "proc_bind not set correctly";
+  auto test = omp_get_proc_bind() == 2;
+  //if(!test) {
+  //  std::cout << test << " proc_bind not set correctly\n";
+  //}
   int existingNumThreads = omp_get_max_threads();
   omp_get_schedule(&existingSched, &existingChunkSize);
-  taco_get_parallel_schedule(&tacoSched, &tacoChunkSize);
+  taco_get_parallel_schedule(&tacoSched, &tacoChunkSize, &tacoMonotonic);
+  
+  omp_sched_t sched;
   switch (tacoSched) {
     case ParallelSchedule::Static:
-      omp_set_schedule(omp_sched_static, tacoChunkSize);
+      sched = omp_sched_static;
       break;
     case ParallelSchedule::Dynamic:
-      omp_set_schedule(omp_sched_dynamic, tacoChunkSize);
+      sched = omp_sched_dynamic;
+      break;
+    case ParallelSchedule::Guided:
+      sched = omp_sched_guided;
       break;
     default:
+      taco_ierror << "Unknown parallel schedule";
+      exit(-1);
       break;
   }
+  if(tacoMonotonic == 1) {
+    sched = static_cast<omp_sched_t>(sched | omp_sched_monotonic);
+  }
+  omp_set_schedule(sched, tacoChunkSize);
+
   omp_set_num_threads(taco_get_num_threads());
 #endif
 

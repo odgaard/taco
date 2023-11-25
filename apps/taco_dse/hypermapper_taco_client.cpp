@@ -43,6 +43,9 @@
 #include <unistd.h>
 #include <thread>
 
+#include <dirent.h>
+#include <sys/stat.h>
+
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
 SpMM *spmm_handler;
@@ -133,6 +136,40 @@ std::ostream& operator<<(std::ostream& os, const google::protobuf::RepeatedField
 }
 */
 
+
+bool startsWith(const std::string &mainStr, const std::string &toMatch) {
+    if (mainStr.size() >= toMatch.size() &&
+        mainStr.compare(0, toMatch.size(), toMatch) == 0)
+        return true;
+    else
+        return false;
+}
+
+void removeContentsOfDirectoriesMatchingPattern(const std::string& directory, const std::string& pattern) {
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir(directory.c_str())) != NULL) {
+        while ((ent = readdir(dir)) != NULL) {
+            std::string dirName = ent->d_name;
+            if (startsWith(dirName, pattern)) {
+                std::string fullPath = directory + "/" + dirName;
+                struct stat statbuf;
+                if (stat(fullPath.c_str(), &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+                    // Use system call to remove the contents of the directory
+                    std::string removeCommand = "rm -rf " + fullPath + "/*";
+                    system(removeCommand.c_str());
+                    std::cout << "Cleared contents of directory: " << fullPath << std::endl;
+                }
+            }
+        }
+        closedir(dir);
+    } else {
+        // Could not open directory
+        perror("Could not open directory");
+    }
+}
+
+
 class ConfigurationServiceImpl final : public ConfigurationService::Service {
 private:
     std::vector<HMInputParamBase *>& m_InParams;
@@ -186,7 +223,7 @@ public:
         HMObjective obj;
         std::vector<double> temp_meds;
         double temp_med;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 5; i++) {
           try {
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
               temp_med = med(obj.results.times);
@@ -201,10 +238,12 @@ public:
           std::cout << temp_med << std::endl;
         }
         double new_med = med(temp_meds);
-        
+
+        removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
+
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
-        std::cout << "[" << hostname << "]: " << local_results.median << ", " << med(local_results.energy_consumptions) << std::endl;
+        std::cout << "[" << hostname << "]: " << new_med << ", " << med(local_results.energy_consumptions) << std::endl;
         Metric metric_median_time;
         metric_median_time.add_values(new_med);
         //metric_median_time.add_values(med(local_results.times));
@@ -340,7 +379,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 }
 
 void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
-  InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1}));
+  InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1, 2}));
   InParams.push_back(new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal, {0, 1, 2, 4, 8, 16, 32, 64, 128}));
   InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal,[]
     {
@@ -353,9 +392,8 @@ void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
       return values;
     }()  // The () at the end causes the lambda to be called immediately
   ));
-
-    //InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal, {1, 2, 4, 8, 16, 32, 64}));
-
+  InParams.push_back(new HMInputParam<int>("omp_monotonic", ParamType::Ordinal, {0, 1}));
+  InParams.push_back(new HMInputParam<int>("omp_dynamic", ParamType::Ordinal, {0, 1}));
   int reorder_size = 5;
   InParams.push_back(new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation, {std::vector<int>{reorder_size}}));
   num_loops = reorder_size;
@@ -459,7 +497,9 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
   int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
   int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[5])->getVal();
+  int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
 
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_I = 67173;
@@ -499,13 +539,12 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     no_sched_init = true;
   }
 
-
   compute_times = std::vector<double>();
   spmm_handler->set_cold_run();
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
 
   if(!no_sched_init) {
-    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, ITERATIONS);
+    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, ITERATIONS);
     spmm_handler->set_cold_run();
   }
 
@@ -947,7 +986,7 @@ bool validate_ordering(std::vector<int> order) {
 }
 
 int main(int argc, char **argv) {
-
+  //setenv("OMP_PROC_BIND", omp_proc_bind, 1);
   if (!getenv("HYPERMAPPER_HOME")) {
     std::string ErrMsg = "Environment variables are not set!\n";
     ErrMsg += "Please set HYPERMAPPER_HOME before running this ";

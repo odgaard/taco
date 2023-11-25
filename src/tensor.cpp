@@ -1507,15 +1507,18 @@ void packOperands(const TensorBase& tensor) {
 static ParallelSchedule taco_parallel_sched = ParallelSchedule::Static;
 static int taco_chunk_size = 0;
 static int taco_num_threads = 1;
+static int taco_monotonic = 0;
 
-void taco_set_parallel_schedule(ParallelSchedule sched, int chunk_size) {
+void taco_set_parallel_schedule(ParallelSchedule sched, int chunk_size, int monotonic) {
   taco_parallel_sched = sched;
   taco_chunk_size = chunk_size;
+  taco_monotonic = monotonic;
 }
 
-void taco_get_parallel_schedule(ParallelSchedule *sched, int *chunk_size) {
+void taco_get_parallel_schedule(ParallelSchedule *sched, int *chunk_size, int *monotonic) {
   *sched = taco_parallel_sched;
   *chunk_size = taco_chunk_size;
+  *monotonic = taco_monotonic;
 }
 
 void taco_set_num_threads(int num_threads) {

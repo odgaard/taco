@@ -1323,16 +1323,16 @@ template <typename CType>
 void Tensor<CType>::operator=(const IndexExpr& expr) {TensorBase::operator=(expr);}
 
 enum class ParallelSchedule {
-  Static, Dynamic
+  Static, Dynamic, Guided
 };
 
 /// Set schedule to use for parallel execution of tensor computations.  This 
 /// will be replaced by a scheduling language in the future.
-void taco_set_parallel_schedule(ParallelSchedule sched, int chunk_size = 0);
+void taco_set_parallel_schedule(ParallelSchedule sched, int chunk_size = 0, int monotonic = 0);
 
 /// Get schedule to use for parallel execution of tensor computations.  This 
 /// will be replaced by a scheduling language in the future.
-void taco_get_parallel_schedule(ParallelSchedule *sched, int *chunk_size);
+void taco_get_parallel_schedule(ParallelSchedule *sched, int *chunk_size, int *monotonic);
 
 /// Set maximum number of threads to use for parallel execution of tensor
 /// computations. This will be replaced by a scheduling language in the future.
