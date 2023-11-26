@@ -109,9 +109,9 @@ static Format initFormat(Format format) {
   return format;
 }
 
+
 TensorBase::TensorBase(string name, Datatype ctype, vector<int> dimensions,
                        Format format, Literal fill) {
-
   // Default fill to zero since undefined. This is done since we need the ctype to initialize the
   // fill and we can't use this inside the default arguments.
   fill = fill.defined()? fill : Literal::zero(ctype);
@@ -253,6 +253,7 @@ bool TensorBase::needsCompute() {
 void TensorBase::setAssembleWhileCompute(bool assembleWhileCompute) {
   content->assembleWhileCompute = assembleWhileCompute;
 }
+
 
 static size_t numIntegersToCompare = 0;
 static int lexicographicalCmp(const void* a, const void* b) {
@@ -595,6 +596,7 @@ const Access TensorBase::operator()() const {
 
 TensorBase::KernelsCache TensorBase::computeKernels;
 std::mutex TensorBase::computeKernelsMutex;
+std::map<int, std::shared_ptr<Module>> grpcCache;
 
 std::shared_ptr<Module> TensorBase::getComputeKernel(const IndexStmt stmt) {
   computeKernelsMutex.lock();
@@ -657,6 +659,7 @@ void TensorBase::compile() {
   compile(stmt, content->assembleWhileCompute);
 }
 
+
 void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   if (!needsCompile()) {
     return;
@@ -666,17 +669,28 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   IndexStmt concretizedAssign = stmt;
   IndexStmt stmtToCompile = stmt.concretize();
   stmtToCompile = scalarPromote(stmtToCompile);
-
-/*  if (!std::getenv("CACHE_KERNELS") ||
+  //std::cout << std::getenv("CACHE_KERNELS") << "\n";
+  int id = std::stoi(std::getenv("CACHE_ID"));
+  //std::cout << id << "\n";
+  if (id > 0) {
+    auto it = grpcCache.find(id);
+    if (it != grpcCache.end()) {
+      // ID exists in the cache
+      content->module = it->second;
+      //std::cout << "Fetched cached kernel\n";
+      return;
+    }
+  }
+  /*if (!std::getenv("CACHE_KERNELS") ||
       std::string(std::getenv("CACHE_KERNELS")) != "0") {
     concretizedAssign = stmtToCompile;
     const auto cachedKernel = getComputeKernel(concretizedAssign);
     if (cachedKernel) {
       content->module = cachedKernel;
+      std::cout << "Fetched cached kernel\n";
       return;
     }
-  }
-  */
+  }*/
 
   if (content->preserveNonZero) {
     content->assembleFunc = lower(stmtToCompile, "assemble", true, false, false,
@@ -695,8 +709,14 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
     content->module->addFunction(content->assembleFunc);
   content->module->addFunction(content->computeFunc);
   content->module->compile();
-  cacheComputeKernel(concretizedAssign, content->module);
+  computeKernelsMutex.lock();
+
+  grpcCache[id] = content->module;
+  //computeKernels.emplace_back(stmt, kernel);
+  computeKernelsMutex.unlock();
+  //cacheComputeKernel(concretizedAssign, content->module);
 }
+
 
 taco_tensor_t* TensorBase::getTacoTensorT() {
   return getStorage();

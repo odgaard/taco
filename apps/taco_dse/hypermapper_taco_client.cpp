@@ -45,6 +45,8 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#include <set>
+#include <cstdlib>
 
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
@@ -78,6 +80,7 @@ int num_j = 0;
 std::string op;
 int num_reps;
 
+std::unordered_map<std::string,bool> conf_cache;
 std::condition_variable shutdown_cv;
 std::mutex shutdown_mutex;
 bool shutdown_flag = false;
@@ -105,6 +108,7 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 double median(vector<double> vec);
 bool validate_ordering_sddmm(std::vector<int> order);
 bool validate_ordering(std::vector<int> order);
+
 
 template <typename T>
 void setParameterValue(HMInputParamBase *param, const T &value) {
@@ -176,7 +180,6 @@ private:
     std::string m_test_name;
     std::string m_matrix_name;
     std::ofstream& m_logger; // Assuming logger is an ofstream. Adjust the type if needed.
-    
 public:
     ConfigurationServiceImpl(std::vector<HMInputParamBase *>& InParams, std::string test_name, std::string matrix_name, std::ofstream &logger) 
         : m_InParams(InParams), m_test_name(test_name), m_matrix_name(matrix_name), m_logger(logger) {}
@@ -239,7 +242,7 @@ public:
         }
         double new_med = med(temp_meds);
 
-        removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
+        //removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
 
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
@@ -487,6 +490,36 @@ double median(vector<double> vec) {
         return size % 2 == 0 ? (vec[mid] + vec[mid-1]) / 2 : vec[mid];
 }
 
+
+#include <set>
+#include <vector>
+#include <tuple>
+#include <cstdlib>
+
+struct ConfigurationStruct {
+    int chunk_size;
+    int unroll_factor;
+    int omp_scheduling_type;
+    std::vector<int> loop_ordering;
+
+    // Constructor
+    ConfigurationStruct(int cs, int uf, int ost, const std::vector<int>& lo) :
+        chunk_size(cs), unroll_factor(uf), omp_scheduling_type(ost), loop_ordering(lo) {}
+
+    bool operator<(const ConfigurationStruct& other) const {
+        if (std::tie(chunk_size, unroll_factor, omp_scheduling_type) != 
+            std::tie(other.chunk_size, other.unroll_factor, other.omp_scheduling_type)) {
+            return std::tie(chunk_size, unroll_factor, omp_scheduling_type) <
+                   std::tie(other.chunk_size, other.unroll_factor, other.omp_scheduling_type);
+        }
+        return loop_ordering < other.loop_ordering;
+    }
+};
+
+
+std::map<ConfigurationStruct, int> seen_configurations;
+int next_id = 1; // Start with an ID of 1
+
 // Function that takes input parameters and generates objective
 HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
 
@@ -500,6 +533,22 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
+  
+  ConfigurationStruct config = {chunk_size, unroll_factor, omp_scheduling_type, loop_ordering};
+  auto it = seen_configurations.find(config);
+  if (it != seen_configurations.end()) {
+    // Configuration seen before, set the existing ID
+    //std::cout << "Configuration seen before" << std::endl;
+    setenv("CACHE_ID", std::to_string(it->second).c_str(), 1);
+    //setenv("CACHE_KERNELS", "1", 1);
+  } else {
+    // New configuration, assign a new ID and add to map
+    seen_configurations[config] = next_id;
+    //std::cout << "New configuration" << std::endl;
+    setenv("CACHE_ID", std::to_string(next_id).c_str(), 1);
+    //setenv("CACHE_KERNELS", "0", 1);
+    next_id++;
+  }
 
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_I = 67173;
