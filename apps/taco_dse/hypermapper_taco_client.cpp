@@ -225,12 +225,20 @@ public:
 
         HMObjective obj;
         std::vector<double> temp_meds;
+        std::vector<double> temp_energy_consumptions;
+        std::vector<double> all_times;
+        std::vector<double> all_energy;
         double temp_med;
+        double temp_energy;
         for (int i = 0; i < 5; i++) {
           try {
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
               temp_med = med(obj.results.times);
+              temp_energy = med(obj.results.energy_consumptions);
+              all_times.insert(all_times.end(), obj.results.times.begin(), obj.results.times.end());
+              all_energy.insert(all_energy.end(), obj.results.energy_consumptions.begin(), obj.results.energy_consumptions.end());
               temp_meds.push_back(temp_med);
+              temp_energy_consumptions.push_back(temp_energy);
           } catch (const std::exception& e) {
               m_logger << "Exception caught: " << e.what() << std::endl;
               return Status(StatusCode::INTERNAL, e.what());
@@ -241,28 +249,35 @@ public:
           std::cout << temp_med << std::endl;
         }
         double new_med = med(temp_meds);
+        double new_energy = med(temp_energy_consumptions);
 
+        std::this_thread::sleep_for(std::chrono::seconds(10));
         //removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
 
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
         std::cout << "[" << hostname << "]: " << new_med << ", " << med(local_results.energy_consumptions) << std::endl;
+        
         Metric metric_median_time;
         metric_median_time.add_values(new_med);
-        //metric_median_time.add_values(med(local_results.times));
         response->add_metrics()->CopyFrom(metric_median_time);
+
         Metric metric_compute_times;
-        for (double time : local_results.times) {
+        //for (double time : local_results.times) {
+        for (double time : all_times) {
             metric_compute_times.mutable_values()->Add(time);
         }
         response->add_metrics()->CopyFrom(metric_compute_times);
 
+        Metric metric_median_energy;
+        metric_median_energy.add_values(new_energy);
+        response->add_metrics()->CopyFrom(metric_median_energy);
 
         //Metric metric_median_energy;
         //metric_median_energy.add_values(med(local_results.energy_consumptions));
         //response->add_metrics()->CopyFrom(metric_median_energy);
         Metric metric_energy_consumptions;
-        for (double energy_consumption : local_results.energy_consumptions) {
+        for (double energy_consumption : all_energy) {
             metric_energy_consumptions.mutable_values()->Add(energy_consumption);
         }
         response->add_metrics()->CopyFrom(metric_energy_consumptions);
@@ -382,7 +397,6 @@ std::string createjson(std::string AppName, std::string OutputFoldername, int Nu
 }
 
 void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
-  InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1, 2}));
   InParams.push_back(new HMInputParam<int>("omp_chunk_size", ParamType::Ordinal, {0, 1, 2, 4, 8, 16, 32, 64, 128}));
   InParams.push_back(new HMInputParam<int>("omp_num_threads", ParamType::Ordinal,[]
     {
@@ -395,8 +409,10 @@ void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
       return values;
     }()  // The () at the end causes the lambda to be called immediately
   ));
+  InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1, 2}));
   InParams.push_back(new HMInputParam<int>("omp_monotonic", ParamType::Ordinal, {0, 1}));
   InParams.push_back(new HMInputParam<int>("omp_dynamic", ParamType::Ordinal, {0, 1}));
+  InParams.push_back(new HMInputParam<int>("omp_proc_bind", ParamType::Ordinal, {0, 1, 2}));
   int reorder_size = 5;
   InParams.push_back(new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation, {std::vector<int>{reorder_size}}));
   num_loops = reorder_size;
@@ -527,14 +543,15 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
+  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
   
-  ConfigurationStruct config = {chunk_size, unroll_factor, omp_scheduling_type, loop_ordering};
+  /*ConfigurationStruct config = {chunk_size, unroll_factor, omp_scheduling_type, loop_ordering};
   auto it = seen_configurations.find(config);
   if (it != seen_configurations.end()) {
     // Configuration seen before, set the existing ID
@@ -548,7 +565,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     setenv("CACHE_ID", std::to_string(next_id).c_str(), 1);
     //setenv("CACHE_KERNELS", "0", 1);
     next_id++;
-  }
+  }*/
 
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_I = 67173;
@@ -615,10 +632,14 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int chunk_size2 = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int chunk_size3 = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
+
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
+  int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
+  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[8])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[9])->getVal();
 
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_K = 256;
@@ -660,7 +681,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   bool valid = true;
   if(!no_sched_init) {
     try {
-      spmv_handler->schedule_and_compute(temp_result, chunk_size, chunk_size2, chunk_size3, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 10);
+      spmv_handler->schedule_and_compute(temp_result, chunk_size, chunk_size2, chunk_size3, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
       spmv_handler->set_cold_run();
     } catch(const taco::TacoException& err) {
       Obj.compute_time = 1000000.0f;
@@ -684,16 +705,15 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[5])->getVal();
-  std::vector<int> default_ordering{0,1,2,3,4};
 
-  for(auto elem : loop_ordering) {
-    std::cout << elem << " ";
-  }
-  std::cout << std::endl;
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
+  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
+  std::vector<int> default_ordering{0,1,2,3,4};
 
   //Initialize tensors
   std::vector<double> compute_times;
@@ -718,12 +738,17 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     // Taco requires you to start with running the deafult
     std::vector<int> tmp_loop_ordering = default_ordering;
     compute_times = vector<double>();
+    taco::util::Timer local_timer;
     for(int i = 0; i < 5; i++) {
       double timer = 0.0;
-      timer = sddmm_handler->compute_unscheduled();
-      compute_times.push_back(timer);
+      local_timer = sddmm_handler->compute_unscheduled();
     }
-    no_sched_time = median(compute_times);
+    auto result = local_timer.getResult();
+    no_sched_results = result;
+    no_sched_time = result.median;
+    no_sched_times = result.times;
+    no_sched_energy = median(result.energy_consumptions);
+    no_sched_energies = result.energy_consumptions;
     no_sched_init = true;
   }
 
@@ -731,12 +756,16 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
 
   if(!no_sched_init) {
-    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 10);
+    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
     sddmm_handler->set_cold_run();
   }
 
-  double compute_time = no_sched_init ? no_sched_time : sddmm_handler->get_compute_time();
-  Obj.compute_time = compute_time;
+  if (no_sched_init) {
+      Obj.results = no_sched_results;
+  } else {
+      taco::util::TimeResults local_results = sddmm_handler->get_results();
+      Obj.results = local_results;
+  }
   return Obj;
 }
 

@@ -670,9 +670,9 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
   IndexStmt stmtToCompile = stmt.concretize();
   stmtToCompile = scalarPromote(stmtToCompile);
   //std::cout << std::getenv("CACHE_KERNELS") << "\n";
-  int id = std::stoi(std::getenv("CACHE_ID"));
+  //int id = std::stoi(std::getenv("CACHE_ID"));
   //std::cout << id << "\n";
-  if (id > 0) {
+  /*if (id > 0) {
     auto it = grpcCache.find(id);
     if (it != grpcCache.end()) {
       // ID exists in the cache
@@ -680,7 +680,7 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
       //std::cout << "Fetched cached kernel\n";
       return;
     }
-  }
+  }*/
   /*if (!std::getenv("CACHE_KERNELS") ||
       std::string(std::getenv("CACHE_KERNELS")) != "0") {
     concretizedAssign = stmtToCompile;
@@ -709,12 +709,12 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
     content->module->addFunction(content->assembleFunc);
   content->module->addFunction(content->computeFunc);
   content->module->compile();
-  computeKernelsMutex.lock();
+  //computeKernelsMutex.lock();
 
-  grpcCache[id] = content->module;
+  //grpcCache[id] = content->module;
   //computeKernels.emplace_back(stmt, kernel);
-  computeKernelsMutex.unlock();
-  //cacheComputeKernel(concretizedAssign, content->module);
+  //computeKernelsMutex.unlock();
+  cacheComputeKernel(concretizedAssign, content->module);
 }
 
 

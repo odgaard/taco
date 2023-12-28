@@ -195,15 +195,15 @@ int Module::callFuncPackedRaw(std::string name, void** args) {
   int existingChunkSize, tacoChunkSize;
   int tacoMonotonic;
   
-  auto omp_proc_bind = "primary";
+  //auto omp_proc_bind = "primary";
   //auto omp_proc_bind = "spread";
   //auto omp_proc_bind = "close";
-  setenv("OMP_PROC_BIND", omp_proc_bind, 1);
-  setenv("OMP_WAIT_POLICY", "active", 1); 
+  //setenv("OMP_PROC_BIND", omp_proc_bind, 1);
+  //setenv("OMP_WAIT_POLICY", "active", 1); 
   //setenv("OMP_PLACES", omp_places, 1);
   //taco_tassert(omp_get_proc_bind() == 2) <<
   //    "proc_bind not set correctly";
-  auto test = omp_get_proc_bind() == 2;
+  //auto test = omp_get_proc_bind() == 2;
   //if(!test) {
   //  std::cout << test << " proc_bind not set correctly\n";
   //}
