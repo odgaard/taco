@@ -48,6 +48,9 @@
 #include <set>
 #include <cstdlib>
 
+#include <algorithm>
+#include <cctype>
+
 SpMV *spmv_handler;
 SpMV *spmv_sparse_handler;
 SpMM *spmm_handler;
@@ -230,6 +233,7 @@ public:
         std::vector<double> all_energy;
         double temp_med;
         double temp_energy;
+        bool feasible_bool = true;
         for (int i = 0; i < 5; i++) {
           try {
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
@@ -239,16 +243,36 @@ public:
               all_energy.insert(all_energy.end(), obj.results.energy_consumptions.begin(), obj.results.energy_consumptions.end());
               temp_meds.push_back(temp_med);
               temp_energy_consumptions.push_back(temp_energy);
-          } catch (const std::exception& e) {
+              if (obj.valid == false) {
+                feasible_bool = false;
+              }
+          //} catch (const std::exception& e) {
+          } catch(const taco::TacoException& e) {
               m_logger << "Exception caught: " << e.what() << std::endl;
-              return Status(StatusCode::INTERNAL, e.what());
+              feasible_bool = false;
+              temp_meds = std::vector<double>(5, 0.0f);
+              temp_energy_consumptions = std::vector<double>(5, 0.0f);
+              all_times = std::vector<double>(5, 0.0f);
+              all_energy = std::vector<double>(5, 0.0f);
+              Feasible feasible;
+              feasible.set_value(feasible_bool); // Mocked feasibility value
+              response->mutable_feasible()->CopyFrom(feasible);
+              return Status(StatusCode::INTERNAL, std::string("TACO Server error: ") + e.what());
+          } catch (const std::runtime_error& e) {
+              m_logger << "Runtime error caught: " << e.what() << std::endl;
+              return Status(StatusCode::INTERNAL, std::string("Runtime error: ") + e.what());
+          } catch (const std::exception& e) {
+              m_logger << "Standard exception caught: " << e.what() << std::endl;
+              return Status(StatusCode::INTERNAL, std::string("General Server error: ") + e.what());
           } catch (...) {
               m_logger << "Unknown exception caught" << std::endl;
               return Status(StatusCode::INTERNAL, "Unknown error");
           }
           std::cout << temp_med << std::endl;
         }
+        std::cout << "Median: " << med(temp_meds) << std::endl;
         double new_med = med(temp_meds);
+        std::cout << "Energy: " << med(temp_energy_consumptions) << std::endl;
         double new_energy = med(temp_energy_consumptions);
 
         std::this_thread::sleep_for(std::chrono::seconds(10));
@@ -256,7 +280,7 @@ public:
 
         // Create a mocked response:
         taco::util::TimeResults local_results = obj.results;
-        std::cout << "[" << hostname << "]: " << new_med << ", " << med(local_results.energy_consumptions) << std::endl;
+        std::cout << "[" << hostname << "]: " << new_med << ", " << new_energy << std::endl;
         
         Metric metric_median_time;
         metric_median_time.add_values(new_med);
@@ -293,7 +317,7 @@ public:
         response->mutable_timestamps()->CopyFrom(timestamp);
 
         Feasible feasible;
-        feasible.set_value(true); // Mocked feasibility value
+        feasible.set_value(feasible_bool); // Mocked feasibility value
         response->mutable_feasible()->CopyFrom(feasible);
 
         return Status::OK;
@@ -462,22 +486,22 @@ int collectInputParamsMTTKRP(std::vector<HMInputParamBase *> &InParams) {
 }
 
 int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name) {
-  if (test_name == "SpMV")
+  if (test_name == "spmv")
     return collectInputParamsSpMV(InParams);
-  if (test_name == "SpMVSparse")
+  if (test_name == "spmvsparse")
     return collectInputParamsSpMV(InParams, 1);
-  if (test_name == "SpMM")
+  if (test_name == "spmm")
     return collectInputParamsSpMM(InParams);
-  if (test_name == "SDDMM")
+  if (test_name == "sddmm")
     return collectInputParamsSDDMM(InParams);
-  if (test_name == "TTV")
+  if (test_name == "ttv")
     return collectInputParamsTTV(InParams);
-  if (test_name == "TTM")
+  if (test_name == "ttm")
     return collectInputParamsTTM(InParams);
-  if (test_name == "MTTKRP")
+  if (test_name == "mttkrp")
     return collectInputParamsMTTKRP(InParams);
   else {
-    std::cout << "Test case not implemented yet" << std::endl;
+    std::cout << "Test case not implemented yet " << test_name << std::endl;
     exit(-1);
   }
 }
@@ -683,9 +707,10 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     try {
       spmv_handler->schedule_and_compute(temp_result, chunk_size, chunk_size2, chunk_size3, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
       spmv_handler->set_cold_run();
-    } catch(const taco::TacoException& err) {
+    } catch(const taco::TacoException& e) {
       Obj.compute_time = 1000000.0f;
       valid = false;
+      std::cout << "Exception caught: " << e.what() << std::endl;
     }
   }
   Obj.valid = valid;
@@ -741,7 +766,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     taco::util::Timer local_timer;
     for(int i = 0; i < 5; i++) {
       double timer = 0.0;
-      local_timer = sddmm_handler->compute_unscheduled();
+      local_timer = sddmm_handler->compute_unscheduled(local_timer);
     }
     auto result = local_timer.getResult();
     no_sched_results = result;
@@ -752,11 +777,10 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     no_sched_init = true;
   }
 
-
   taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
 
   if(!no_sched_init) {
-    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
+    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false, 10);
     sddmm_handler->set_cold_run();
   }
 
@@ -778,10 +802,13 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   int chunk_size_i = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int chunk_size_fpos = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
   int chunk_size_k = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[6])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
+  int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
+  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[8])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[9])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
   int NUM_I = 1000;
@@ -802,47 +829,31 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
     ttv_handler->NUM_K = NUM_K;
     ttv_handler->initialize_data(0);
     initialized = true;
-    num_i = ttv_handler->NUM_I;
-    num_j = ttv_handler->NUM_J;
-
-    // Added for filtering vectors out from suitesparse
-    op = "TTV";
-    cout << "computing unscheduled" << endl;
-    compute_times = vector<double>();
-    for(int i = 0; i < 5; i++) {
-      double timer = 0.0;
-      timer = ttv_handler->compute_unscheduled();
-      compute_times.push_back(timer);
-    }
-    no_sched_time = median(compute_times);
-    no_sched_init = true;
-    cout << "computed unscheduled" << endl;
   }
 
   //Initiate scheduling passing in chunk_size (param to optimize)
   bool valid = true;
-  Obj.valid = valid;
 
-  compute_times = vector<double>();
   ttv_handler->set_cold_run();
 
-  if(!no_sched_init) {
-    std::cout << "NUM_I: " << ttv_handler->NUM_I << ", NUM_J: " << ttv_handler->NUM_J << std::endl;
-    taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
-    try{
-  	   ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
-                                         loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false, 5);
-    	 ttv_handler->set_cold_run();
-       double compute_time = ttv_handler->get_compute_time();
-       Obj.compute_time = compute_time;
-	     valid = true;
-    } catch (const taco::TacoException& err) {
-	     Obj.compute_time = 100000.0f;
-  	   valid = false;
-    }
-    Obj.valid = valid;
+  taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
+  try {
+    ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
+                                       loop_ordering, omp_scheduling_type, omp_chunk_size, 
+                                       omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false, 5);
+  	ttv_handler->set_cold_run();
+  } catch (const taco::TacoException& err) {
+    valid = false;
   }
+  Obj.valid = valid;
 
+/*  if (no_sched_init) {
+      Obj.results = no_sched_results;
+  } else {
+    */
+      taco::util::TimeResults local_results = ttv_handler->get_results();
+      Obj.results = local_results;
+  //}
   return Obj;
 }
 
@@ -918,10 +929,13 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
   int unroll_factor = static_cast<HMInputParam<int>*>(InputParams[1])->getVal();
-  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
-  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
-  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[5])->getVal();
+  int omp_chunk_size = static_cast<HMInputParam<int>*>(InputParams[2])->getVal();
+  int omp_num_threads = static_cast<HMInputParam<int>*>(InputParams[3])->getVal();
+  int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
+  int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
+  int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
+  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
   std::vector<double> compute_times;
@@ -940,54 +954,39 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   
     // Added for filtering vectors out from suitesparse
     op = "MTTKRP";
-
-    compute_times = vector<double>();
-    for(int i = 0; i < 5; i++) {
-      double timer = 0.0;
-      timer = mttkrp_handler->compute_unscheduled();
-      compute_times.push_back(timer);
-    }
-    cout << compute_times.size() << endl;
-    for (double c : compute_times) {
-      cout << c << " " << endl;
-    }
-    cout << " == " << endl;
-    Obj.compute_time = median(compute_times);
     no_sched_init = true;
   }
 
   compute_times = vector<double>();
   taco::Tensor<double> temp_result({mttkrp_handler->NUM_I, mttkrp_handler->NUM_J}, taco::dense);
 
-  if(!no_sched_init) {
-    try{
-	     mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_num_threads, false);
-       mttkrp_handler->set_cold_run();
-       double compute_time = mttkrp_handler->get_compute_time();
-       Obj.compute_time = compute_time;
-	     valid = true;
-    } catch (const taco::TacoException& err) {
-	     Obj.compute_time = 100000.0f;
-  	   valid = false;
-    }
-    Obj.valid = valid;
+  try {
+	   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false);
+     mttkrp_handler->set_cold_run();
+     taco::util::TimeResults local_results = mttkrp_handler->get_results();
+     Obj.results = local_results;
+	   valid = true;
+  } catch (const taco::TacoException& err) {
+	   Obj.compute_time = 100000.0f;
+    valid = false;
   }
+  Obj.valid = valid;
 
   return Obj;
 }
 
 HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger) {
-  if (test_name == "SpMV")
+  if (test_name == "spmv")
     return calculateObjectiveSpMVDense(InParams, matrix_name, logger);
-  if (test_name == "SpMM")
+  if (test_name == "spmm")
     return calculateObjectiveSpMMDense(InParams, matrix_name, logger);
-  if (test_name == "SDDMM")
+  if (test_name == "sddmm")
     return calculateObjectiveSDDMMDense(InParams, matrix_name, logger);
-  if (test_name == "TTV")
+  if (test_name == "ttv")
     return calculateObjectiveTTVDense(InParams, matrix_name, logger);
-  if (test_name == "TTM")
+  if (test_name == "ttm")
     return calculateObjectiveTTMDense(InParams, matrix_name, logger);
-  if (test_name == "MTTKRP")
+  if (test_name == "mttkrp")
     return calculateObjectiveMTTKRPDense(InParams, matrix_name, logger);
   else {
     std::cout << "Test case not implemented yet" << std::endl;
@@ -1130,8 +1129,20 @@ int main(int argc, char **argv) {
   // std::string test_name = "SpMM";
   std::string test_name, optimization, matrix_name, count, name_extension;
   test_name = program.get<std::string>("--op");
-  optimization = program.get<std::string>("--method");
-  matrix_name = program.get<std::string>("--matrix_name");
+  //optimization = program.get<std::string>("--method");
+  optimization = "random";
+  //matrix_name = program.get<std::string>("--matrix_name");
+  std::transform(test_name.begin(), test_name.end(), test_name.begin(),
+    [](unsigned char c){ return std::tolower(c); });
+  if (test_name == "spmm") {
+    matrix_name = "cage12/cage12.mtx";
+  } else if (test_name == "spmv") {
+    matrix_name = "cage13/cage13.mtx";
+  } else if (test_name == "sddmm") {
+    matrix_name = "cage10/cage10.mtx";
+  } else if (test_name == "ttv") {
+    matrix_name = "uber-pickups.tns";
+  }
   num_reps = program.get<int>("--num_reps");
   count = program.get<std::string>("--count");
   name_extension = program.get<std::string>("--alternative_setting");
