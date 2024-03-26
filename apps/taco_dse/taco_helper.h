@@ -821,7 +821,7 @@ public:
 
     taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order,
     int chunk_size, int unroll_factor, int omp_scheduling_type, int omp_chunk_size,
-    int omp_monotonic, int omp_dynamic, int omp_proc_bind, int omp_num_threads) {
+    int omp_monotonic, int omp_dynamic, int omp_num_threads) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         taco::taco_set_num_threads(omp_num_threads);
@@ -840,11 +840,11 @@ public:
     void set_cold_run() { cold_run = true; }
 
     void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order,
-    int omp_scheduling_type, int omp_chunk_size, int omp_monotonic, int omp_dynamic, int omp_proc_bind, int num_threads,
+    int omp_scheduling_type, int omp_chunk_size, int omp_monotonic, int omp_dynamic, int num_threads,
     bool default_config=false, int num_reps=5) {
         result(i, j) = B(i, j) * C(i, k) * D(k, j);
         taco::IndexStmt sched = result.getAssignment().concretize();
-        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, num_threads);
+        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, num_threads);
 
         taco::util::Timer timer;
         std::vector<double> compute_times;
@@ -1026,7 +1026,7 @@ public:
         initialized = true;
     }
 
-    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size_i=16, int chunk_size_fpos=16, int chunk_size_k = 16, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int omp_num_threads=32) {
+    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size_i=16, int chunk_size_fpos=16, int chunk_size_k = 16, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_num_threads=32) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         taco::taco_set_num_threads(omp_num_threads);
@@ -1045,14 +1045,14 @@ public:
     }
 
     void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size_i, int chunk_size_fpos, int chunk_size_k,
-                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int num_threads=32, bool default_config=false,
+                              std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int num_threads=32, bool default_config=false,
                               int num_reps=10) {
         taco::Tensor<double> result = copyNonZeroStructure({NUM_I, NUM_J}, {taco::Sparse, taco::Sparse}, B, 2);
         result(i, j) = B(i, j, k) * c(k);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
         std::vector<int> order_{0,1,2};
-        sched = schedule(sched, order, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, num_threads);
+        sched = schedule(sched, order, chunk_size_i, chunk_size_fpos, chunk_size_k, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, num_threads);
         cold_run = false;
 
 	    taco::util::Timer timer;
@@ -1438,7 +1438,7 @@ public:
         return timer;
     }
 
-    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int omp_num_threads=32) {
+    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_num_threads=32) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         taco::taco_set_num_threads(omp_num_threads);
@@ -1455,12 +1455,12 @@ public:
             .parallelize(i1, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int num_threads=32, bool default_config=false, int num_reps=20) {
         taco::Tensor<double> result("result", {NUM_I, NUM_J}, taco::dense);
         result(i,j) = B(i,k,l,m) * C(k,j) * D(l,j) * E(m,j);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
-        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, num_threads);
+        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, num_threads);
 
         std::cout<<sched<<std::endl;
 

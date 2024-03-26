@@ -435,7 +435,6 @@ void addCommonParams(std::vector<HMInputParamBase *> &InParams) {
   InParams.push_back(new HMInputParam<int>("omp_scheduling_type", ParamType::Ordinal, {0, 1, 2}));
   InParams.push_back(new HMInputParam<int>("omp_monotonic", ParamType::Ordinal, {0, 1}));
   InParams.push_back(new HMInputParam<int>("omp_dynamic", ParamType::Ordinal, {0, 1}));
-  InParams.push_back(new HMInputParam<int>("omp_proc_bind", ParamType::Ordinal, {0, 1, 2}));
   int reorder_size = 5;
   InParams.push_back(new HMInputParam<std::vector<int>>("permutation", ParamType::Permutation, {std::vector<int>{reorder_size}}));
   num_loops = reorder_size;
@@ -571,8 +570,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
-  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
   
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_I = 67173;
@@ -651,8 +649,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
-  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[8])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[9])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
 
   std::vector<int> default_ordering{0,1,2,3,4};
   std::vector<double> compute_times;
@@ -693,7 +690,10 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   bool valid = true;
   if(!no_sched_init) {
     try {
-      spmv_handler->schedule_and_compute(temp_result, chunk_size, chunk_size2, chunk_size3, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
+      spmv_handler->schedule_and_compute(temp_result,
+        chunk_size, chunk_size2, chunk_size3,
+        loop_ordering, omp_scheduling_type, omp_chunk_size,
+        omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
       spmv_handler->set_cold_run();
     } catch(const taco::TacoException& e) {
       Obj.compute_time = 1000000.0f;
@@ -724,8 +724,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
-  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
   //Initialize tensors
@@ -770,7 +769,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
 
   if(!no_sched_init) {
-    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false, 10);
+    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
     sddmm_handler->set_cold_run();
   }
 
@@ -797,8 +796,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
-  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[8])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[9])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
   int NUM_I = 1000;
@@ -830,7 +828,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   try {
     ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
                                        loop_ordering, omp_scheduling_type, omp_chunk_size, 
-                                       omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false, 5);
+                                       omp_monotonic, omp_dynamic, omp_num_threads, false, 5);
   	ttv_handler->set_cold_run();
   } catch (const taco::TacoException& err) {
     valid = false;
@@ -924,8 +922,7 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   int omp_scheduling_type = static_cast<HMInputParam<int>*>(InputParams[4])->getVal();
   int omp_monotonic = static_cast<HMInputParam<int>*>(InputParams[5])->getVal();
   int omp_dynamic = static_cast<HMInputParam<int>*>(InputParams[6])->getVal();
-  int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
-  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
+  std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[7])->getVal();
   std::vector<int> default_ordering{0,1,2,3,4};
 
   std::vector<double> compute_times;
@@ -951,7 +948,7 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   taco::Tensor<double> temp_result({mttkrp_handler->NUM_I, mttkrp_handler->NUM_J}, taco::dense);
 
   try {
-	   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, omp_num_threads, false);
+	   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false);
      mttkrp_handler->set_cold_run();
      taco::util::TimeResults local_results = mttkrp_handler->get_results();
      Obj.results = local_results;
