@@ -557,7 +557,10 @@ public:
         return equals(expected, actual);
     }
 
-    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=1, int omp_monotonic=0, int omp_dynamic=0, int num_threads=32) {
+    taco::IndexStmt schedule(taco::IndexStmt &sched,
+        std::vector<int> order, int chunk_size, int unroll_factor,
+        int omp_scheduling_type, int omp_chunk_size,
+        int omp_monotonic, int omp_dynamic, int num_threads) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         reorder.reserve(order.size());
@@ -588,15 +591,24 @@ public:
 
     void set_cold_run() { cold_run = true; }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int num_threads=32, bool default_config=false, int num_reps=20) {
+    void schedule_and_compute(taco::Tensor<double> &result,
+        int chunk_size, int unroll_factor, std::vector<int> order,
+        int omp_scheduling_type, int omp_chunk_size,
+        int omp_monotonic, int omp_dynamic, int num_threads,
+        bool default_config, int num_reps) {
+
         result(i, k) = B(i, j) * C(j, k);
 
         taco::IndexStmt sched = result.getAssignment().concretize();
 
-        sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, num_threads);
+        sched = schedule(sched,
+            order, chunk_size, unroll_factor,
+            omp_scheduling_type, omp_chunk_size,
+            omp_monotonic, omp_dynamic, num_threads
+        );
 
         if(cold_run) {
-	          taco::Tensor<double> temp_result({NUM_I, NUM_K}, taco::dense);
+	        taco::Tensor<double> temp_result({NUM_I, NUM_K}, taco::dense);
             for(int i = 0; i < 2; i++) {
                 compute_cold_run(temp_result, sched);
             }
@@ -807,17 +819,13 @@ public:
         result.compute();
     }
 
-    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order, int chunk_size=16, int unroll_factor=8, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int omp_num_threads=32) {
+    taco::IndexStmt schedule(taco::IndexStmt &sched, std::vector<int> order,
+    int chunk_size, int unroll_factor, int omp_scheduling_type, int omp_chunk_size,
+    int omp_monotonic, int omp_dynamic, int omp_proc_bind, int omp_num_threads) {
         using namespace taco;
         std::vector<taco::IndexVar> reorder; //= get_reordering(order);
         taco::taco_set_num_threads(omp_num_threads);
         omp_set_dynamic(omp_dynamic);
-        if(omp_scheduling_type == 0) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Static, omp_chunk_size);
-        }
-        else if(omp_scheduling_type == 1) {
-            taco::taco_set_parallel_schedule(taco::ParallelSchedule::Dynamic, omp_chunk_size);
-        }
         taco_set_parallel_schedule_chunked(omp_scheduling_type, omp_chunk_size, omp_monotonic);
         reorder.reserve(order.size());
         get_reordering(reorder, order);
@@ -831,7 +839,9 @@ public:
 
     void set_cold_run() { cold_run = true; }
 
-    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int omp_proc_bind=0, int num_threads=32, bool default_config=false, int num_reps=5) {
+    void schedule_and_compute(taco::Tensor<double> &result, int chunk_size, int unroll_factor, std::vector<int> order,
+    int omp_scheduling_type, int omp_chunk_size, int omp_monotonic, int omp_dynamic, int omp_proc_bind, int num_threads,
+    bool default_config=false, int num_reps=5) {
         result(i, j) = B(i, j) * C(i, k) * D(k, j);
         taco::IndexStmt sched = result.getAssignment().concretize();
         sched = schedule(sched, order, chunk_size, unroll_factor, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_proc_bind, num_threads);

@@ -51,7 +51,13 @@ public:
     if(dummyB){ free(dummyB); }
   }
   void start() {
-    energy_begin = get_energy_consumed(rapl_dir);
+    start(false);
+  }
+
+  void start(bool energy) {
+    if(energy) {
+      energy_begin = get_energy_consumed(rapl_dir);
+    }
     begin = std::chrono::steady_clock::now();
   }
 
@@ -70,21 +76,22 @@ public:
   }
 
   void stop() {
+    stop(false);
+  }
+  void stop(bool energy) {
     auto end = std::chrono::steady_clock::now();
-    auto energy_end = get_energy_consumed(rapl_dir);
-
     auto diff = std::chrono::duration<double, std::milli>(end - begin).count();
     times.push_back(diff);
-
-    auto energy_diff = energy_end - energy_begin;
-
-    // Adjust for potential wraparound
-    const double MAX_ENERGY = get_max_energy_range(rapl_dir);
-    if (energy_diff < 0) {
+    if (energy) {
+      auto energy_end = get_energy_consumed(rapl_dir);
+      auto energy_diff = energy_end - energy_begin;
+      // Adjust for potential wraparound
+      const double MAX_ENERGY = get_max_energy_range(rapl_dir);
+      if (energy_diff < 0) {
         energy_diff += MAX_ENERGY;
+      }
+      energy_consumptions.push_back(energy_diff);
     }
-
-    energy_consumptions.push_back(energy_diff);
   }
 
   // Function to read energy consumed

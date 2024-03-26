@@ -56,6 +56,6 @@ RUN mkdir build && \
 
 COPY run_taco.sh .
 ENTRYPOINT ["./run_taco.sh"]
-CMD ["-mat", "Goodwin_040/Goodwin_040.mtx", "--method", "random", "-o", "SpMM"]
+CMD ["-o", "SpMM"]
 
 

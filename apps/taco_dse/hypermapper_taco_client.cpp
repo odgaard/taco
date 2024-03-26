@@ -69,6 +69,8 @@ using grpc::StatusCode;
 using namespace std::chrono;
 using json = nlohmann::json;
 
+bool energy = false;
+
 namespace fs = std::experimental::filesystem;
 int WARP_SIZE = 32;
 taco::util::TimeResults no_sched_results;
@@ -130,18 +132,6 @@ void setParameterValue(HMInputParamBase *param, const T &value) {
                 std::cout << "Unknown set parameter type: " << typeid(ValueType).name() << std::endl;
             }
     }
-
-/*
-std::ostream& operator<<(std::ostream& os, const google::protobuf::RepeatedField<int>& values) {
-    for (int i = 0; i < values.size(); ++i) {
-        os << values[i];
-        if (i != values.size() - 1) {
-            os << ", ";
-        }
-    }
-    return os;
-}
-*/
 
 
 bool startsWith(const std::string &mainStr, const std::string &toMatch) {
@@ -234,15 +224,21 @@ public:
         double temp_med;
         double temp_energy;
         bool feasible_bool = true;
-        for (int i = 0; i < 5; i++) {
+        int iterations = 5;
+        for (int i = 0; i < iterations; i++) {
           try {
               obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
+              if(energy) {
+                temp_energy = med(obj.results.energy_consumptions);
+                all_energy.insert(all_energy.end(), obj.results.energy_consumptions.begin(), obj.results.energy_consumptions.end());
+                temp_energy_consumptions.push_back(temp_energy);
+              } else {
+                all_energy = std::vector<double>(iterations, 0.0f);
+                temp_energy_consumptions = std::vector<double>(iterations, 0.0f);
+              }
               temp_med = med(obj.results.times);
-              temp_energy = med(obj.results.energy_consumptions);
               all_times.insert(all_times.end(), obj.results.times.begin(), obj.results.times.end());
-              all_energy.insert(all_energy.end(), obj.results.energy_consumptions.begin(), obj.results.energy_consumptions.end());
               temp_meds.push_back(temp_med);
-              temp_energy_consumptions.push_back(temp_energy);
               if (obj.valid == false) {
                 feasible_bool = false;
               }
@@ -250,10 +246,10 @@ public:
           } catch(const taco::TacoException& e) {
               m_logger << "Exception caught: " << e.what() << std::endl;
               feasible_bool = false;
-              temp_meds = std::vector<double>(5, 0.0f);
-              temp_energy_consumptions = std::vector<double>(5, 0.0f);
-              all_times = std::vector<double>(5, 0.0f);
-              all_energy = std::vector<double>(5, 0.0f);
+              temp_meds = std::vector<double>(iterations, 0.0f);
+              temp_energy_consumptions = std::vector<double>(iterations, 0.0f);
+              all_times = std::vector<double>(iterations, 0.0f);
+              all_energy = std::vector<double>(iterations, 0.0f);
               Feasible feasible;
               feasible.set_value(feasible_bool); // Mocked feasibility value
               response->mutable_feasible()->CopyFrom(feasible);
@@ -272,8 +268,11 @@ public:
         }
         std::cout << "Median: " << med(temp_meds) << std::endl;
         double new_med = med(temp_meds);
-        std::cout << "Energy: " << med(temp_energy_consumptions) << std::endl;
-        double new_energy = med(temp_energy_consumptions);
+        double new_energy = 0.0;
+        if (energy) {
+          std::cout << "Energy: " << med(temp_energy_consumptions) << std::endl;
+          double new_energy = med(temp_energy_consumptions);
+        }
 
         std::this_thread::sleep_for(std::chrono::seconds(10));
         //removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
@@ -283,29 +282,29 @@ public:
         std::cout << "[" << hostname << "]: " << new_med << ", " << new_energy << std::endl;
         
         Metric metric_median_time;
+        metric_median_time.set_name("compute_time");
         metric_median_time.add_values(new_med);
         response->add_metrics()->CopyFrom(metric_median_time);
 
         Metric metric_compute_times;
         //for (double time : local_results.times) {
+        metric_compute_times.set_name("compute_times");
         for (double time : all_times) {
             metric_compute_times.mutable_values()->Add(time);
         }
         response->add_metrics()->CopyFrom(metric_compute_times);
 
         Metric metric_median_energy;
+        metric_median_energy.set_name("energy");
         metric_median_energy.add_values(new_energy);
         response->add_metrics()->CopyFrom(metric_median_energy);
 
-        //Metric metric_median_energy;
-        //metric_median_energy.add_values(med(local_results.energy_consumptions));
-        //response->add_metrics()->CopyFrom(metric_median_energy);
         Metric metric_energy_consumptions;
+        metric_energy_consumptions.set_name("energy_consumptions");
         for (double energy_consumption : all_energy) {
             metric_energy_consumptions.mutable_values()->Add(energy_consumption);
         }
         response->add_metrics()->CopyFrom(metric_energy_consumptions);
-
 
         // Get current time in milliseconds since the epoch
         auto now = std::chrono::system_clock::now();
@@ -575,22 +574,6 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   int omp_proc_bind = static_cast<HMInputParam<int>*>(InputParams[7])->getVal();
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[8])->getVal();
   
-  /*ConfigurationStruct config = {chunk_size, unroll_factor, omp_scheduling_type, loop_ordering};
-  auto it = seen_configurations.find(config);
-  if (it != seen_configurations.end()) {
-    // Configuration seen before, set the existing ID
-    //std::cout << "Configuration seen before" << std::endl;
-    setenv("CACHE_ID", std::to_string(it->second).c_str(), 1);
-    //setenv("CACHE_KERNELS", "1", 1);
-  } else {
-    // New configuration, assign a new ID and add to map
-    seen_configurations[config] = next_id;
-    //std::cout << "New configuration" << std::endl;
-    setenv("CACHE_ID", std::to_string(next_id).c_str(), 1);
-    //setenv("CACHE_KERNELS", "0", 1);
-    next_id++;
-  }*/
-
   std::vector<int> default_ordering{0,1,2,3,4};
   // int NUM_I = 67173;
   // int NUM_J = 67173;
@@ -624,8 +607,10 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
     no_sched_results = result;
     no_sched_time = result.median;
     no_sched_times = result.times;
-    no_sched_energy = median(result.energy_consumptions);
-    no_sched_energies = result.energy_consumptions;
+    if (energy) {
+      no_sched_energy = median(result.energy_consumptions);
+      no_sched_energies = result.energy_consumptions;
+    }
     no_sched_init = true;
   }
 
@@ -634,7 +619,12 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   taco::Tensor<double> temp_result({spmm_handler->NUM_I, spmm_handler->NUM_K}, taco::dense);
 
   if(!no_sched_init) {
-    spmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, ITERATIONS);
+    spmm_handler->schedule_and_compute(temp_result,
+      chunk_size, unroll_factor, loop_ordering,
+      omp_scheduling_type, omp_chunk_size,
+      omp_monotonic, omp_dynamic, omp_num_threads,
+      false, ITERATIONS
+    );
     spmm_handler->set_cold_run();
   }
 
@@ -644,7 +634,6 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
       taco::util::TimeResults local_results = spmm_handler->get_results();
       Obj.results = local_results;
   }
-
 
   return Obj;
 }
@@ -666,7 +655,6 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
   std::vector<int> loop_ordering = static_cast<HMInputParam<std::vector<int>>*>(InputParams[9])->getVal();
 
   std::vector<int> default_ordering{0,1,2,3,4};
-  // int NUM_K = 256;
   std::vector<double> compute_times;
 
   bool no_sched_init = false;
@@ -675,9 +663,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     cout << "INITIALIZING" << endl;
     spmv_handler = new SpMV();
     spmv_handler->matrix_name = matrix_name;
-    // spmv_handler->NUM_K = NUM_K;
     spmv_handler->initialize_data(1);
-    // result = spmv_handler->get_A();
     taco::Tensor<double> temp_result({spmv_handler->NUM_I}, taco::dense);
     initialized = true;
     sparsity = spmv_handler->get_sparsity();
@@ -694,8 +680,10 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
     no_sched_results = result;
     no_sched_time = result.median;
     no_sched_times = result.times;
-    no_sched_energy = median(result.energy_consumptions);
-    no_sched_energies = result.energy_consumptions;
+    if (energy) {
+      no_sched_energy = median(result.energy_consumptions);
+      no_sched_energies = result.energy_consumptions;
+    }
     no_sched_init = true;
   }
 
@@ -772,8 +760,10 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
     no_sched_results = result;
     no_sched_time = result.median;
     no_sched_times = result.times;
-    no_sched_energy = median(result.energy_consumptions);
-    no_sched_energies = result.energy_consumptions;
+    if (energy) {
+      no_sched_energy = median(result.energy_consumptions);
+      no_sched_energies = result.energy_consumptions;
+    }
     no_sched_init = true;
   }
 
@@ -1126,6 +1116,7 @@ int main(int argc, char **argv) {
     std::exit(1);
   }
 
+
   // std::string test_name = "SpMM";
   std::string test_name, optimization, matrix_name, count, name_extension;
   test_name = program.get<std::string>("--op");
@@ -1142,6 +1133,8 @@ int main(int argc, char **argv) {
     matrix_name = "cage10/cage10.mtx";
   } else if (test_name == "ttv") {
     matrix_name = "uber-pickups.tns";
+  } else if (test_name == "mttkrp") {
+    matrix_name = "facebook.tns";
   }
   num_reps = program.get<int>("--num_reps");
   count = program.get<std::string>("--count");
