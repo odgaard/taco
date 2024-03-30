@@ -828,7 +828,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   try {
     ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
                                        loop_ordering, omp_scheduling_type, omp_chunk_size, 
-                                       omp_monotonic, omp_dynamic, omp_num_threads, false, 5);
+                                       omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
   	ttv_handler->set_cold_run();
   } catch (const taco::TacoException& err) {
     valid = false;
@@ -1131,7 +1131,7 @@ int main(int argc, char **argv) {
   } else if (test_name == "ttv") {
     matrix_name = "uber-pickups.tns";
   } else if (test_name == "mttkrp") {
-    matrix_name = "facebook.tns";
+    matrix_name = "uber-pickups.tns";
   }
   num_reps = program.get<int>("--num_reps");
   count = program.get<std::string>("--count");
