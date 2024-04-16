@@ -825,14 +825,14 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   ttv_handler->set_cold_run();
 
   taco::Tensor<double> temp_result({ttv_handler->NUM_I, ttv_handler->NUM_J}, taco::dense);
-  try {
+  //try {
     ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
                                        loop_ordering, omp_scheduling_type, omp_chunk_size, 
                                        omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
   	ttv_handler->set_cold_run();
-  } catch (const taco::TacoException& err) {
-    valid = false;
-  }
+  //} catch (const taco::TacoException& err) {
+  //  valid = false;
+  //}
   Obj.valid = valid;
 
 /*  if (no_sched_init) {
@@ -1129,7 +1129,7 @@ int main(int argc, char **argv) {
   } else if (test_name == "sddmm") {
     matrix_name = "cage10/cage10.mtx";
   } else if (test_name == "ttv") {
-    matrix_name = "uber-pickups.tns";
+    matrix_name = "facebook.tns";
   } else if (test_name == "mttkrp") {
     matrix_name = "uber-pickups.tns";
   }
