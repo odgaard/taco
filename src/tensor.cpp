@@ -681,7 +681,7 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
       return;
     }
   }*/
-  /*if (!std::getenv("CACHE_KERNELS") ||
+  if (!std::getenv("CACHE_KERNELS") ||
       std::string(std::getenv("CACHE_KERNELS")) != "0") {
     concretizedAssign = stmtToCompile;
     const auto cachedKernel = getComputeKernel(concretizedAssign);
@@ -690,7 +690,7 @@ void TensorBase::compile(taco::IndexStmt stmt, bool assembleWhileCompute) {
       std::cout << "Fetched cached kernel\n";
       return;
     }
-  }*/
+  }
 
   if (content->preserveNonZero) {
     content->assembleFunc = lower(stmtToCompile, "assemble", true, false, false,
