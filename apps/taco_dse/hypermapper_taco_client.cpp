@@ -933,7 +933,7 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
     cout << "INITIALIZING" << endl;
     mttkrp_handler = new MTTKRP();
     mttkrp_handler->matrix_name = matrix_name;
-    mttkrp_handler->NUM_J = 2560;
+    mttkrp_handler->NUM_J = 640;
     mttkrp_handler->initialize_data(1);
     initialized = true;
     num_i = mttkrp_handler->NUM_I;
