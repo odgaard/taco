@@ -100,13 +100,13 @@ int collectInputParamsTTM(std::vector<HMInputParamBase *> &InParams);
 int collectInputParamsMTTKRP(std::vector<HMInputParamBase *> &InParams);
 int collectInputParams(std::vector<HMInputParamBase *> &InParams, std::string test_name);
 std::vector<HMInputParamBase *>::iterator findHMParamByKey(std::vector<HMInputParamBase *> &InParams, const std::string& Key);
-HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger);
-HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger);
+HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations);
+HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger, int iterations);
 std::string createjson(std::string AppName, std::string OutputFoldername, int NumIterations,
                   int NumDSERandomSamples, std::vector<HMInputParamBase *> &InParams,
                   std::vector<std::string> Objectives, bool predictor, std::string optimization, std::string count);
@@ -189,6 +189,36 @@ public:
 
         // Access and process the configurations:
         const Configuration& config = request->configurations();
+        const Fidelities& fidelities = request->fidelities();
+
+        int iterations = 10;
+        int repeats = 5;
+        int wait_between_repeats = 0.0;
+        int wait_after_run = 10.0;
+
+
+        for (const auto& param : fidelities.parameters()) {
+            const std::string& param_name = param.first;
+            const Parameter& parameter = param.second;
+            if (param_name == "iterations") {
+                iterations = parameter.integer_param().value();
+            }
+            if (param_name == "repeats") {
+                repeats = parameter.integer_param().value();
+            }
+            if (param_name == "wait_between_repeats") {
+                wait_between_repeats = parameter.real_param().value();
+            }
+            if (param_name == "wait_after_run") {
+                wait_after_run = parameter.real_param().value();
+            }
+        }
+
+        std::cout << "Iterations: " << iterations << std::endl;
+        std::cout << "Repeats: " << repeats << std::endl;
+        std::cout << "Wait between repeats: " << wait_between_repeats << std::endl;
+        std::cout << "Wait after run: " << wait_after_run << std::endl;
+
         // Inside your loop:
         for (const auto& param : config.parameters()) {
             const std::string& param_name = param.first;
@@ -224,17 +254,17 @@ public:
         double temp_med;
         double temp_energy;
         bool feasible_bool = true;
-        int iterations = 5;
-        for (int i = 0; i < iterations; i++) {
+
+        for (int i = 0; i < repeats; i++) {
           try {
-              obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger);
+              obj = calculateObjective(m_InParams, m_test_name, m_matrix_name, m_logger, iterations);
               if(energy) {
                 temp_energy = med(obj.results.energy_consumptions);
                 all_energy.insert(all_energy.end(), obj.results.energy_consumptions.begin(), obj.results.energy_consumptions.end());
                 temp_energy_consumptions.push_back(temp_energy);
               } else {
-                all_energy = std::vector<double>(iterations, 0.0f);
-                temp_energy_consumptions = std::vector<double>(iterations, 0.0f);
+                all_energy = std::vector<double>(repeats, 0.0f);
+                temp_energy_consumptions = std::vector<double>(repeats, 0.0f);
               }
               temp_med = med(obj.results.times);
               all_times.insert(all_times.end(), obj.results.times.begin(), obj.results.times.end());
@@ -246,10 +276,10 @@ public:
           } catch(const taco::TacoException& e) {
               m_logger << "Exception caught: " << e.what() << std::endl;
               feasible_bool = false;
-              temp_meds = std::vector<double>(iterations, 0.0f);
-              temp_energy_consumptions = std::vector<double>(iterations, 0.0f);
-              all_times = std::vector<double>(iterations, 0.0f);
-              all_energy = std::vector<double>(iterations, 0.0f);
+              temp_meds = std::vector<double>(repeats, 0.0f);
+              temp_energy_consumptions = std::vector<double>(repeats, 0.0f);
+              all_times = std::vector<double>(repeats, 0.0f);
+              all_energy = std::vector<double>(repeats, 0.0f);
               Feasible feasible;
               feasible.set_value(feasible_bool); // Mocked feasibility value
               response->mutable_feasible()->CopyFrom(feasible);
@@ -265,6 +295,7 @@ public:
               return Status(StatusCode::INTERNAL, "Unknown error");
           }
           std::cout << temp_med << std::endl;
+          std::this_thread::sleep_for(std::chrono::seconds(wait_between_repeats));
         }
         std::cout << "Median: " << med(temp_meds) << std::endl;
         double new_med = med(temp_meds);
@@ -274,7 +305,7 @@ public:
           double new_energy = med(temp_energy_consumptions);
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        std::this_thread::sleep_for(std::chrono::seconds(wait_after_run));
         //removeContentsOfDirectoriesMatchingPattern("/tmp", "taco_");
 
         // Create a mocked response:
@@ -559,7 +590,7 @@ std::map<ConfigurationStruct, int> seen_configurations;
 int next_id = 1; // Start with an ID of 1
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
 
   using namespace taco;
   HMObjective Obj;
@@ -576,7 +607,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   // int NUM_I = 67173;
   // int NUM_J = 67173;
   int NUM_K = 256;
-  int ITERATIONS = 10; // Was 10
+  int ITERATIONS = iterations; // Was 10
   // float _sparsity = .982356;
   std::vector<double> compute_times;
 
@@ -636,7 +667,7 @@ HMObjective calculateObjectiveSpMMDense(std::vector<HMInputParamBase *> &InputPa
   return Obj;
 }
 
-HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
 
   using namespace taco;
   HMObjective Obj;
@@ -693,7 +724,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
       spmv_handler->schedule_and_compute(temp_result,
         chunk_size, chunk_size2, chunk_size3,
         loop_ordering, omp_scheduling_type, omp_chunk_size,
-        omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
+        omp_monotonic, omp_dynamic, omp_num_threads, false, iterations);
       spmv_handler->set_cold_run();
     } catch(const taco::TacoException& e) {
       Obj.compute_time = 1000000.0f;
@@ -713,7 +744,7 @@ HMObjective calculateObjectiveSpMVDense(std::vector<HMInputParamBase *> &InputPa
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -769,7 +800,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
   taco::Tensor<double> temp_result({sddmm_handler->NUM_I, sddmm_handler->NUM_J}, taco::dense);
 
   if(!no_sched_init) {
-    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
+    sddmm_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, iterations);
     sddmm_handler->set_cold_run();
   }
 
@@ -785,7 +816,7 @@ HMObjective calculateObjectiveSDDMMDense(std::vector<HMInputParamBase *> &InputP
 float dummy_result = 200.0f;
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size_i = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -828,7 +859,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
   //try {
     ttv_handler->schedule_and_compute(temp_result, chunk_size_i, chunk_size_fpos, chunk_size_k,
                                        loop_ordering, omp_scheduling_type, omp_chunk_size, 
-                                       omp_monotonic, omp_dynamic, omp_num_threads, false, 10);
+                                       omp_monotonic, omp_dynamic, omp_num_threads, false, iterations);
   	ttv_handler->set_cold_run();
   //} catch (const taco::TacoException& err) {
   //  valid = false;
@@ -846,7 +877,7 @@ HMObjective calculateObjectiveTTVDense(std::vector<HMInputParamBase *> &InputPar
 }
 
 // Function that takes input parameters and generates objective
-HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -912,7 +943,7 @@ HMObjective calculateObjectiveTTMDense(std::vector<HMInputParamBase *> &InputPar
   return Obj;
 }
 
-HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &InputParams, std::string matrix_name, std::ofstream &logger, int iterations) {
   using namespace taco;
   HMObjective Obj;
   int chunk_size = static_cast<HMInputParam<int>*>(InputParams[0])->getVal();
@@ -948,7 +979,7 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   taco::Tensor<double> temp_result({mttkrp_handler->NUM_I, mttkrp_handler->NUM_J}, taco::dense);
 
   try {
-	   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false);
+	   mttkrp_handler->schedule_and_compute(temp_result, chunk_size, unroll_factor, loop_ordering, omp_scheduling_type, omp_chunk_size, omp_monotonic, omp_dynamic, omp_num_threads, false, iterations);
      mttkrp_handler->set_cold_run();
      taco::util::TimeResults local_results = mttkrp_handler->get_results();
      Obj.results = local_results;
@@ -962,19 +993,19 @@ HMObjective calculateObjectiveMTTKRPDense(std::vector<HMInputParamBase *> &Input
   return Obj;
 }
 
-HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger) {
+HMObjective calculateObjective(std::vector<HMInputParamBase *> &InParams, std::string test_name, std::string matrix_name, std::ofstream &logger, int iterations) {
   if (test_name == "spmv")
-    return calculateObjectiveSpMVDense(InParams, matrix_name, logger);
+    return calculateObjectiveSpMVDense(InParams, matrix_name, logger, iterations);
   if (test_name == "spmm")
-    return calculateObjectiveSpMMDense(InParams, matrix_name, logger);
+    return calculateObjectiveSpMMDense(InParams, matrix_name, logger, iterations);
   if (test_name == "sddmm")
-    return calculateObjectiveSDDMMDense(InParams, matrix_name, logger);
+    return calculateObjectiveSDDMMDense(InParams, matrix_name, logger, iterations);
   if (test_name == "ttv")
-    return calculateObjectiveTTVDense(InParams, matrix_name, logger);
+    return calculateObjectiveTTVDense(InParams, matrix_name, logger, iterations);
   if (test_name == "ttm")
-    return calculateObjectiveTTMDense(InParams, matrix_name, logger);
+    return calculateObjectiveTTMDense(InParams, matrix_name, logger, iterations);
   if (test_name == "mttkrp")
-    return calculateObjectiveMTTKRPDense(InParams, matrix_name, logger);
+    return calculateObjectiveMTTKRPDense(InParams, matrix_name, logger, iterations);
   else {
     std::cout << "Test case not implemented yet" << std::endl;
     exit(-1);

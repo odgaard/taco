@@ -1451,7 +1451,9 @@ public:
             .parallelize(i1, ParallelUnit::CPUThread, OutputRaceStrategy::NoRaces);
     }
 
-    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor, std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0, int omp_dynamic=0, int num_threads=32, bool default_config=false, int num_reps=10) {
+    void schedule_and_compute(taco::Tensor<double> &result_, int chunk_size, int unroll_factor,
+    std::vector<int> order, int omp_scheduling_type=0, int omp_chunk_size=0, int omp_monotonic=0,
+    int omp_dynamic=0, int num_threads=32, bool default_config=false, int num_reps=10) {
         taco::Tensor<double> result("result", {NUM_I, NUM_J}, taco::dense);
         result(i,j) = B(i,k,l,m) * C(k,j) * D(l,j) * E(m,j);
 

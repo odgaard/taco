@@ -16,9 +16,14 @@ message ShutdownResponse {
 message ConfigurationRequest {
   Configuration configurations = 1;
   string output_data_file = 2;
+  Fidelities fidelities = 3;
 }
 
 message Configuration {
+  map<string, Parameter> parameters = 1;
+}
+
+message Fidelities {
   map<string, Parameter> parameters = 1;
 }
 
